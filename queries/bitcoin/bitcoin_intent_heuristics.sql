@@ -7,13 +7,15 @@
 -- Author: stefanopepe
 -- Created: 2026-01-28
 -- Updated: 2026-01-28
+-- Note: On first run, only processes data from fallback date onwards.
+--       Adjust DATE '2026-01-01' in checkpoint CTE for historical analysis.
 -- ============================================================
 -- Output Columns:
 --   day            - Date of transactions
 --   intent         - Classified transaction intent
 --   tx_count       - Number of transactions
---   btc_in         - Total input value (satoshis)
---   btc_out        - Total output value (satoshis)
+--   sats_in        - Total input value (satoshis)
+--   sats_out       - Total output value (satoshis)
 --   avg_inputs     - Average input count per tx
 --   avg_outputs    - Average output count per tx
 --   median_inputs  - Median input count per tx
@@ -29,8 +31,8 @@ prev AS (
             day DATE,
             intent VARCHAR,
             tx_count BIGINT,
-            btc_in DOUBLE,
-            btc_out DOUBLE,
+            sats_in DOUBLE,
+            sats_out DOUBLE,
             avg_inputs DOUBLE,
             avg_outputs DOUBLE,
             median_inputs DOUBLE,
@@ -52,8 +54,7 @@ inputs_by_tx AS (
         CAST(date_trunc('day', i.block_time) AS DATE) AS day,
         i.tx_id                                       AS tx_id,
         COUNT(*)                                      AS input_count,
-        SUM(i.value)                                  AS input_value_sats,
-        COUNT(DISTINCT i.address)                     AS input_address_count
+        SUM(i.value)                                  AS input_value_sats
     FROM bitcoin.inputs i
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', i.block_time) AS DATE) >= c.cutoff_day
@@ -67,8 +68,7 @@ outputs_by_tx AS (
         CAST(date_trunc('day', o.block_time) AS DATE) AS day,
         o.tx_id                                       AS tx_id,
         COUNT(*)                                      AS output_count,
-        SUM(o.value)                                  AS output_value_sats,
-        COUNT(DISTINCT o.address)                     AS output_address_count
+        SUM(o.value)                                  AS output_value_sats
     FROM bitcoin.outputs o
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', o.block_time) AS DATE) >= c.cutoff_day
@@ -83,10 +83,8 @@ tx AS (
         i.tx_id,
         i.input_count,
         i.input_value_sats,
-        i.input_address_count,
         COALESCE(o.output_count, 0)              AS output_count,
-        COALESCE(o.output_value_sats, 0)         AS output_value_sats,
-        COALESCE(o.output_address_count, 0)      AS output_address_count
+        COALESCE(o.output_value_sats, 0)         AS output_value_sats
     FROM inputs_by_tx i
     LEFT JOIN outputs_by_tx o
       ON  i.day = o.day
@@ -102,6 +100,9 @@ classified AS (
         input_value_sats,
         output_value_sats,
         CASE
+            -- Guard: skip malformed tx with no outputs
+            WHEN output_count = 0
+                THEN 'malformed_no_outputs'
             WHEN input_count >= 10 AND output_count <= 2
                 THEN 'consolidation'
             WHEN input_count <= 2 AND output_count >= 10
@@ -122,8 +123,8 @@ new_data AS (
         day                                                AS day,
         intent                                             AS intent,
         COUNT(*)                                           AS tx_count,
-        SUM(input_value_sats)                              AS btc_in,
-        SUM(output_value_sats)                             AS btc_out,
+        SUM(input_value_sats)                              AS sats_in,
+        SUM(output_value_sats)                             AS sats_out,
         AVG(input_count)                                   AS avg_inputs,
         AVG(output_count)                                  AS avg_outputs,
         APPROX_PERCENTILE(input_count, 0.5)                AS median_inputs,
