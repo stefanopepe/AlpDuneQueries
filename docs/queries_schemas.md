@@ -10,8 +10,9 @@ This document provides an overview of all SQL queries in the `/queries/` directo
 
 - [Overview](#overview)
 - [Query Index](#query-index)
+- [Query Dependencies](#query-dependencies)
 - [Bitcoin Queries](#bitcoin-queries)
-  - [bitcoin_intent_heuristics.sql](#bitcoin_intent_heuristicssql)
+  - [bitcoin_utxo_heuristics.sql](#bitcoin_utxo_heuristicssql)
   - [bitcoin_privacy_heuristics_v2.sql](#bitcoin_privacy_heuristics_v2sql)
 
 ---
@@ -39,18 +40,49 @@ queries/
 
 ## Query Index
 
-| Query | Blockchain | Description | Tables Used |
-|-------|------------|-------------|-------------|
-| [bitcoin_intent_heuristics.sql](#bitcoin_intent_heuristicssql) | Bitcoin | Classifies transactions by intent patterns | `bitcoin.inputs`, `bitcoin.outputs` |
-| [bitcoin_privacy_heuristics_v2.sql](#bitcoin_privacy_heuristics_v2sql) | Bitcoin | Detects privacy issues using Esplora-style heuristics | `bitcoin.inputs`, `bitcoin.outputs` |
+| Query | Blockchain | Dune Query ID | Description | Tables Used |
+|-------|------------|---------------|-------------|-------------|
+| [bitcoin_utxo_heuristics.sql](#bitcoin_utxo_heuristicssql) | Bitcoin | `query_6614095` | Classifies transactions by intent patterns | `bitcoin.inputs`, `bitcoin.outputs` |
+| [bitcoin_privacy_heuristics_v2.sql](#bitcoin_privacy_heuristics_v2sql) | Bitcoin | TBD | Detects privacy issues on "other" intent transactions | `bitcoin.inputs`, `bitcoin.outputs` |
+
+---
+
+## Query Dependencies
+
+The following diagram shows the relationship between queries:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 1: UTXO HEURISTICS (query_6614095)                                   │
+│  bitcoin_utxo_heuristics.sql                                                │
+│                                                                             │
+│  Classifies ALL transactions into intent categories:                        │
+│  • consolidation, fan_out_batch, coinjoin_like, self_transfer              │
+│  • change_like_2_outputs, malformed_no_outputs, other                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      │ "other" intent
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 2: PRIVACY HEURISTICS                                                │
+│  bitcoin_privacy_heuristics_v2.sql                                          │
+│                                                                             │
+│  Analyzes ONLY "other" transactions for privacy patterns:                   │
+│  • change_precision, change_script_type, uih1, uih2                        │
+│  • address_reuse, no_privacy_issues                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Note:** The privacy heuristics query replicates the UTXO classification logic internally to filter to "other" transactions. It does not directly reference `query_6614095` since that query outputs aggregated data without transaction IDs.
 
 ---
 
 ## Bitcoin Queries
 
-### bitcoin_intent_heuristics.sql
+### bitcoin_utxo_heuristics.sql
 
-**Path:** `queries/bitcoin/bitcoin_intent_heuristics.sql`
+**Path:** `queries/bitcoin/bitcoin_utxo_heuristics.sql`
+**Dune Query ID:** `query_6614095`
 
 **Description:**
 Classifies Bitcoin transactions by their likely intent based on input/output patterns. Uses heuristics to identify consolidations, batch payments, CoinJoin-like transactions, and other common patterns.
@@ -102,7 +134,7 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 | `self_transfer` | inputs = 1, outputs = 1 | Single input to single output |
 | `change_like_2_outputs` | inputs ≥ 2, outputs = 2 | Standard payment with change |
 | `malformed_no_outputs` | outputs = 0 | Edge case: no outputs |
-| `other` | All other patterns | Unclassified transactions |
+| `other` | All other patterns | Unclassified transactions → analyzed by privacy heuristics |
 
 #### Example Output
 
@@ -117,56 +149,150 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 | 2026-01-27 | other                | 156789   | 456789012345   | 456789012300   | 3.2        | 4.8         |
 ```
 
-#### Query Structure
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTE: prev                                                           │
-│   Load previous query results (incremental processing)              │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTE: checkpoint                                                     │
-│   Calculate cutoff date (max(prev.day) - 1 day)                     │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTEs: inputs_by_tx, outputs_by_tx                                   │
-│   Aggregate inputs/outputs per transaction for new date range       │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTE: tx                                                             │
-│   Join inputs and outputs at transaction level                      │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTE: classified                                                     │
-│   Apply intent classification rules                                 │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ CTE: new_data                                                       │
-│   Aggregate classified transactions by day and intent               │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ Final: UNION kept_old + new_data                                    │
-│   Merge historical data with newly computed data                    │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
 #### Notes
 
 - **Coinbase Exclusion:** Coinbase transactions (block rewards) are excluded since they don't represent user-initiated activity
 - **Incremental Design:** Query is designed for efficient incremental updates; only recomputes recent data
 - **Thresholds:** The input/output count thresholds (10, 5, 2, 1) are configurable heuristics based on common Bitcoin usage patterns
+- **Downstream:** The "other" category is further analyzed by `bitcoin_privacy_heuristics_v2.sql`
+
+---
+
+### bitcoin_privacy_heuristics_v2.sql
+
+**Path:** `queries/bitcoin/bitcoin_privacy_heuristics_v2.sql`
+**Dune Query ID:** TBD
+
+**Description:**
+Implements advanced privacy analysis heuristics based on Blockstream Esplora's privacy-analysis.js methodology. Analyzes ONLY transactions classified as "other" by the UTXO Heuristics query, providing deeper insight into this previously uncategorized bucket.
+
+**Author:** stefanopepe
+**Created:** 2026-01-29
+**Updated:** 2026-01-29
+
+**Reference:** [Blockstream Esplora privacy-analysis.js](https://github.com/Blockstream/esplora/blob/master/client/src/lib/privacy-analysis.js)
+
+#### Purpose
+
+Detects privacy-revealing patterns in Bitcoin transactions that weren't classified by the UTXO heuristics layer. Helps identify:
+- Change output detection (via precision or script type)
+- Unnecessary input usage patterns
+- Address reuse vulnerabilities
+
+#### Dependency
+
+This query depends on the classification logic from `bitcoin_utxo_heuristics.sql` (`query_6614095`). It filters to only process transactions that would be classified as "other" by that query.
+
+#### Dune Tables Used
+
+| Table | Purpose | Key Columns Used |
+|-------|---------|------------------|
+| `bitcoin.inputs` | Transaction inputs | `block_time`, `tx_id`, `index`, `value`, `address`, `type`, `is_coinbase` |
+| `bitcoin.outputs` | Transaction outputs | `block_time`, `tx_id`, `index`, `value`, `address`, `type` |
+
+#### Input Parameters
+
+This query uses Dune's incremental processing with `previous.query.result()`. No user-defined parameters required.
+
+**Incremental Processing:**
+- Uses 1-day lookback window for recomputation
+- Default fallback date: `2026-01-01` (adjustable in `checkpoint` CTE)
+- Excludes coinbase transactions from analysis
+
+#### Output Schema
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `day` | DATE | Date of transactions |
+| `privacy_heuristic` | VARCHAR | The privacy issue detected |
+| `tx_count` | BIGINT | Number of transactions |
+| `sats_total` | DOUBLE | Total satoshis involved |
+| `avg_inputs` | DOUBLE | Average input count |
+| `avg_outputs` | DOUBLE | Average output count |
+
+#### Privacy Heuristics
+
+| Heuristic | Criteria | Description |
+|-----------|----------|-------------|
+| `change_precision` | 2 outputs, ≥3 digit precision difference | Change detected via trailing zeros difference |
+| `change_script_type` | 2 outputs, different script types, homogeneous inputs | Change detected via script type mismatch |
+| `uih1` | inputs ≥2, outputs = 2, smallest input unnecessary for smallest output | Unnecessary Input Heuristic 1 |
+| `uih2` | inputs ≥2, outputs = 2, smallest input unnecessary for largest output | Unnecessary Input Heuristic 2 |
+| `address_reuse` | Output address matches input address | Privacy leak via address reuse |
+| `no_privacy_issues` | None of above triggered | No detectable privacy issues |
+
+**Note:** `coinjoin_detected` and `self_transfer` heuristics are handled by the UTXO Heuristics layer and are not duplicated here.
+
+#### Example Output
+
+```
+| day        | privacy_heuristic   | tx_count | sats_total        | avg_inputs | avg_outputs |
+|------------|---------------------|----------|-------------------|------------|-------------|
+| 2026-01-27 | address_reuse       | 83758    | 209068454128190   | 1.29       | 2.91        |
+| 2026-01-27 | change_script_type  | 112321   | 127928379184560   | 1.00       | 2.00        |
+| 2026-01-27 | no_privacy_issues   | 60033    | 103477829561490   | 2.00       | 2.64        |
+| 2026-01-28 | address_reuse       | 77757    | 224791928388940   | 1.38       | 2.84        |
+| 2026-01-28 | change_script_type  | 88416    | 95163452325580    | 1.00       | 2.00        |
+| 2026-01-28 | no_privacy_issues   | 60781    | 93139945643090    | 2.27       | 2.51        |
+```
+
+#### Query Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTEs: prev, checkpoint                                                      │
+│   Incremental processing setup                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTEs: raw_inputs, raw_outputs                                               │
+│   Load raw transaction data for date range                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTEs: tx_counts, other_tx_ids                                               │
+│   Apply UTXO classification → filter to "other" only                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTEs: tx_input_stats, tx_output_stats, two_output_details                   │
+│   Aggregate transaction-level stats (filtered to "other")                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTE: address_reuse_detection                                                │
+│   Detect address reuse patterns                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTEs: tx_combined, tx_with_precision                                        │
+│   Join all data, calculate precision metrics                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CTE: classified                                                             │
+│   Apply privacy heuristic classification                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Final: UNION kept_old + new_data                                            │
+│   Merge historical data with newly computed data                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Notes
+
+- **UTXO Dependency:** This query only analyzes "other" transactions from the UTXO layer
+- **Coinbase Exclusion:** Coinbase transactions are excluded
+- **Incremental Design:** Efficient incremental updates with 1-day lookback
+- **Precision Calculation:** Uses trailing zero count difference to detect change outputs
 
 ---
 
