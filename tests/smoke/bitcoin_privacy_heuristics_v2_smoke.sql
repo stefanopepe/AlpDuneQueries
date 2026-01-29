@@ -6,156 +6,172 @@
 -- ============================================================
 
 WITH
--- Sample recent data (last 1 hour for speed)
+-- Sample recent data (last 100 blocks for reliable data)
 raw_inputs AS (
     SELECT
-        CAST(date_trunc('day', i.block_time) AS DATE) AS day,
         i.tx_id,
         i.index AS input_index,
         i.value AS input_value,
         i.address AS input_address,
         i.type AS input_script_type
     FROM bitcoin.inputs i
-    WHERE i.block_time >= NOW() - INTERVAL '1' HOUR
+    WHERE i.block_height >= (SELECT MAX(block_height) - 100 FROM bitcoin.blocks)
       AND i.is_coinbase = FALSE
 ),
 
 raw_outputs AS (
     SELECT
-        CAST(date_trunc('day', o.block_time) AS DATE) AS day,
         o.tx_id,
         o.index AS output_index,
         o.value AS output_value,
         o.address AS output_address,
         o.type AS output_script_type
     FROM bitcoin.outputs o
-    WHERE o.block_time >= NOW() - INTERVAL '1' HOUR
-      AND o.type NOT IN ('nulldata', 'nonstandard')
+    WHERE o.block_height >= (SELECT MAX(block_height) - 100 FROM bitcoin.blocks)
+      AND o.type NOT IN ('nulldata', 'nonstandard', 'unknown')
 ),
 
 tx_input_stats AS (
     SELECT
-        day,
         tx_id,
         COUNT(*) AS input_count,
         SUM(input_value) AS total_input_value,
         MIN(input_value) AS min_input_value,
         MAX(input_value) AS max_input_value,
-        ARRAY_AGG(DISTINCT input_script_type) AS input_script_types,
         COUNT(DISTINCT input_script_type) AS distinct_input_script_count
     FROM raw_inputs
-    GROUP BY day, tx_id
+    GROUP BY tx_id
 ),
 
 tx_output_stats AS (
     SELECT
-        day,
         tx_id,
         COUNT(*) AS output_count,
         SUM(output_value) AS total_output_value,
         MIN(output_value) AS min_output_value,
         MAX(output_value) AS max_output_value,
-        ARRAY_AGG(DISTINCT output_script_type) AS output_script_types,
         COUNT(DISTINCT output_script_type) AS distinct_output_script_count
     FROM raw_outputs
-    GROUP BY day, tx_id
+    GROUP BY tx_id
 ),
 
-two_output_details AS (
+-- For 2-output txs: get the two output values and types
+two_output_txs AS (
     SELECT
-        day,
-        tx_id,
-        ARRAY_AGG(output_value ORDER BY output_index) AS output_values,
-        ARRAY_AGG(output_script_type ORDER BY output_index) AS output_types
-    FROM raw_outputs
-    WHERE tx_id IN (
-        SELECT tx_id FROM tx_output_stats WHERE output_count = 2
-    )
-    GROUP BY day, tx_id
+        o.tx_id,
+        MIN(CASE WHEN rn = 1 THEN output_value END) AS out1_value,
+        MIN(CASE WHEN rn = 2 THEN output_value END) AS out2_value,
+        MIN(CASE WHEN rn = 1 THEN output_script_type END) AS out1_type,
+        MIN(CASE WHEN rn = 2 THEN output_script_type END) AS out2_type
+    FROM (
+        SELECT
+            tx_id,
+            output_value,
+            output_script_type,
+            ROW_NUMBER() OVER (PARTITION BY tx_id ORDER BY output_index) AS rn
+        FROM raw_outputs
+        WHERE tx_id IN (SELECT tx_id FROM tx_output_stats WHERE output_count = 2)
+    ) o
+    GROUP BY o.tx_id
 ),
 
+-- Count equal outputs for coinjoin detection
 coinjoin_detection AS (
     SELECT
-        o.day,
-        o.tx_id,
+        tx_id,
         COUNT(*) AS total_outputs,
         MAX(value_count) AS max_equal_outputs
-    FROM raw_outputs o
-    INNER JOIN (
-        SELECT day, tx_id, output_value, COUNT(*) AS value_count
+    FROM (
+        SELECT tx_id, output_value, COUNT(*) AS value_count
         FROM raw_outputs
-        GROUP BY day, tx_id, output_value
-    ) vc ON o.day = vc.day AND o.tx_id = vc.tx_id
-    GROUP BY o.day, o.tx_id
+        GROUP BY tx_id, output_value
+    )
+    GROUP BY tx_id
 ),
 
+-- Detect address reuse
 address_reuse_detection AS (
-    SELECT DISTINCT
-        i.day,
-        i.tx_id,
-        TRUE AS has_address_reuse
+    SELECT DISTINCT i.tx_id
     FROM raw_inputs i
     INNER JOIN raw_outputs o
-        ON i.day = o.day
-        AND i.tx_id = o.tx_id
+        ON i.tx_id = o.tx_id
         AND i.input_address = o.output_address
         AND i.input_address IS NOT NULL
 ),
 
+-- Combine all stats
 tx_combined AS (
     SELECT
-        i.day,
         i.tx_id,
         i.input_count,
         i.total_input_value,
         i.min_input_value,
         i.max_input_value,
-        i.input_script_types,
         i.distinct_input_script_count,
         COALESCE(o.output_count, 0) AS output_count,
         COALESCE(o.total_output_value, 0) AS total_output_value,
         COALESCE(o.min_output_value, 0) AS min_output_value,
         COALESCE(o.max_output_value, 0) AS max_output_value,
-        o.output_script_types,
         COALESCE(o.distinct_output_script_count, 0) AS distinct_output_script_count,
         i.total_input_value - COALESCE(o.total_output_value, 0) AS fee,
-        tod.output_values,
-        tod.output_types,
+        t2.out1_value,
+        t2.out2_value,
+        t2.out1_type,
+        t2.out2_type,
         COALESCE(cj.total_outputs, 0) AS cj_total_outputs,
         COALESCE(cj.max_equal_outputs, 0) AS cj_max_equal_outputs,
-        COALESCE(ar.has_address_reuse, FALSE) AS has_address_reuse
+        CASE WHEN ar.tx_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_address_reuse
     FROM tx_input_stats i
-    LEFT JOIN tx_output_stats o ON i.day = o.day AND i.tx_id = o.tx_id
-    LEFT JOIN two_output_details tod ON i.day = tod.day AND i.tx_id = tod.tx_id
-    LEFT JOIN coinjoin_detection cj ON i.day = cj.day AND i.tx_id = cj.tx_id
-    LEFT JOIN address_reuse_detection ar ON i.day = ar.day AND i.tx_id = ar.tx_id
+    LEFT JOIN tx_output_stats o ON i.tx_id = o.tx_id
+    LEFT JOIN two_output_txs t2 ON i.tx_id = t2.tx_id
+    LEFT JOIN coinjoin_detection cj ON i.tx_id = cj.tx_id
+    LEFT JOIN address_reuse_detection ar ON i.tx_id = ar.tx_id
 ),
 
+-- Calculate precision difference using log10 for trailing zeros
+-- trailing zeros ≈ number of times divisible by 10
 tx_with_precision AS (
     SELECT
         *,
         CASE
-            WHEN output_count = 2 AND output_values IS NOT NULL THEN
+            WHEN output_count = 2 AND out1_value IS NOT NULL AND out2_value IS NOT NULL
+                 AND out1_value > 0 AND out2_value > 0 THEN
                 ABS(
-                    COALESCE(LENGTH(CAST(output_values[1] AS VARCHAR))
-                        - LENGTH(RTRIM(CAST(output_values[1] AS VARCHAR), '0')), 0)
+                    -- Count trailing zeros: floor(log10(gcd(value, 10^8))) approximation
+                    -- Simplified: compare if values are "round" (divisible by 1000+ sats)
+                    CASE WHEN out1_value % 100000000 = 0 THEN 8
+                         WHEN out1_value % 10000000 = 0 THEN 7
+                         WHEN out1_value % 1000000 = 0 THEN 6
+                         WHEN out1_value % 100000 = 0 THEN 5
+                         WHEN out1_value % 10000 = 0 THEN 4
+                         WHEN out1_value % 1000 = 0 THEN 3
+                         WHEN out1_value % 100 = 0 THEN 2
+                         WHEN out1_value % 10 = 0 THEN 1
+                         ELSE 0 END
                     -
-                    COALESCE(LENGTH(CAST(output_values[2] AS VARCHAR))
-                        - LENGTH(RTRIM(CAST(output_values[2] AS VARCHAR), '0')), 0)
+                    CASE WHEN out2_value % 100000000 = 0 THEN 8
+                         WHEN out2_value % 10000000 = 0 THEN 7
+                         WHEN out2_value % 1000000 = 0 THEN 6
+                         WHEN out2_value % 100000 = 0 THEN 5
+                         WHEN out2_value % 10000 = 0 THEN 4
+                         WHEN out2_value % 1000 = 0 THEN 3
+                         WHEN out2_value % 100 = 0 THEN 2
+                         WHEN out2_value % 10 = 0 THEN 1
+                         ELSE 0 END
                 )
             ELSE 0
         END AS precision_diff,
         CASE
-            WHEN output_count = 2 AND output_types IS NOT NULL
-                 AND output_types[1] != output_types[2] THEN TRUE
+            WHEN output_count = 2 AND out1_type IS NOT NULL AND out2_type IS NOT NULL
+                 AND out1_type != out2_type THEN TRUE
             ELSE FALSE
         END AS script_types_differ
     FROM tx_combined
 ),
 
+-- Classify transactions
 classified AS (
     SELECT
-        day,
         tx_id,
         input_count,
         output_count,
@@ -165,7 +181,7 @@ classified AS (
             WHEN input_count >= 2
                  AND cj_total_outputs >= 2
                  AND cj_max_equal_outputs >= 2
-                 AND CAST(cj_max_equal_outputs AS DOUBLE) / CAST(cj_total_outputs AS DOUBLE) >= 0.5
+                 AND CAST(cj_max_equal_outputs AS DOUBLE) / NULLIF(CAST(cj_total_outputs AS DOUBLE), 0) >= 0.5
                  AND cj_max_equal_outputs >= LEAST(GREATEST(2, cj_total_outputs / 2), 5)
             THEN 'coinjoin_detected'
             WHEN output_count = 1 THEN 'self_transfer'

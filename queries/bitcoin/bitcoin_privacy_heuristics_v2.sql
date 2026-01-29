@@ -116,17 +116,27 @@ tx_output_stats AS (
 -- 7) For 2-output transactions, get individual output details for precision analysis
 two_output_details AS (
     SELECT
-        day,
-        tx_id,
-        ARRAY_AGG(output_value ORDER BY output_index) AS output_values,
-        ARRAY_AGG(output_script_type ORDER BY output_index) AS output_types
-    FROM raw_outputs
-    WHERE tx_id IN (
-        SELECT tx_id
-        FROM tx_output_stats
-        WHERE output_count = 2
-    )
-    GROUP BY day, tx_id
+        o.day,
+        o.tx_id,
+        MIN(CASE WHEN rn = 1 THEN output_value END) AS out1_value,
+        MIN(CASE WHEN rn = 2 THEN output_value END) AS out2_value,
+        MIN(CASE WHEN rn = 1 THEN output_script_type END) AS out1_type,
+        MIN(CASE WHEN rn = 2 THEN output_script_type END) AS out2_type
+    FROM (
+        SELECT
+            day,
+            tx_id,
+            output_value,
+            output_script_type,
+            ROW_NUMBER() OVER (PARTITION BY day, tx_id ORDER BY output_index) AS rn
+        FROM raw_outputs
+        WHERE tx_id IN (
+            SELECT tx_id
+            FROM tx_output_stats
+            WHERE output_count = 2
+        )
+    ) o
+    GROUP BY o.day, o.tx_id
 ),
 
 -- 8) Detect CoinJoin patterns: multiple equal outputs
@@ -185,8 +195,10 @@ tx_combined AS (
         -- Fee calculation
         i.total_input_value - COALESCE(o.total_output_value, 0) AS fee,
         -- Two-output details
-        tod.output_values,
-        tod.output_types,
+        tod.out1_value,
+        tod.out2_value,
+        tod.out1_type,
+        tod.out2_type,
         -- CoinJoin metrics
         COALESCE(cj.total_outputs, 0) AS cj_total_outputs,
         COALESCE(cj.max_equal_outputs, 0) AS cj_max_equal_outputs,
@@ -200,28 +212,43 @@ tx_combined AS (
 ),
 
 -- 11) Calculate precision for 2-output transactions
--- Precision = number of trailing zeros when expressed in satoshis
+-- Precision = number of trailing zeros when expressed in satoshis (using modulo)
 tx_with_precision AS (
     SELECT
         *,
-        -- For 2-output txs, calculate precision difference
+        -- For 2-output txs, calculate precision difference using modulo
         CASE
-            WHEN output_count = 2 AND output_values IS NOT NULL THEN
+            WHEN output_count = 2 AND out1_value IS NOT NULL AND out2_value IS NOT NULL
+                 AND out1_value > 0 AND out2_value > 0 THEN
                 ABS(
                     -- Count trailing zeros for first output
-                    COALESCE(LENGTH(CAST(output_values[1] AS VARCHAR))
-                        - LENGTH(RTRIM(CAST(output_values[1] AS VARCHAR), '0')), 0)
+                    CASE WHEN out1_value % 100000000 = 0 THEN 8
+                         WHEN out1_value % 10000000 = 0 THEN 7
+                         WHEN out1_value % 1000000 = 0 THEN 6
+                         WHEN out1_value % 100000 = 0 THEN 5
+                         WHEN out1_value % 10000 = 0 THEN 4
+                         WHEN out1_value % 1000 = 0 THEN 3
+                         WHEN out1_value % 100 = 0 THEN 2
+                         WHEN out1_value % 10 = 0 THEN 1
+                         ELSE 0 END
                     -
                     -- Count trailing zeros for second output
-                    COALESCE(LENGTH(CAST(output_values[2] AS VARCHAR))
-                        - LENGTH(RTRIM(CAST(output_values[2] AS VARCHAR), '0')), 0)
+                    CASE WHEN out2_value % 100000000 = 0 THEN 8
+                         WHEN out2_value % 10000000 = 0 THEN 7
+                         WHEN out2_value % 1000000 = 0 THEN 6
+                         WHEN out2_value % 100000 = 0 THEN 5
+                         WHEN out2_value % 10000 = 0 THEN 4
+                         WHEN out2_value % 1000 = 0 THEN 3
+                         WHEN out2_value % 100 = 0 THEN 2
+                         WHEN out2_value % 10 = 0 THEN 1
+                         ELSE 0 END
                 )
             ELSE 0
         END AS precision_diff,
         -- Check if output script types differ
         CASE
-            WHEN output_count = 2 AND output_types IS NOT NULL
-                 AND output_types[1] != output_types[2] THEN TRUE
+            WHEN output_count = 2 AND out1_type IS NOT NULL AND out2_type IS NOT NULL
+                 AND out1_type != out2_type THEN TRUE
             ELSE FALSE
         END AS script_types_differ
     FROM tx_combined
