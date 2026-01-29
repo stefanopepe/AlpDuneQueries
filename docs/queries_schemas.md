@@ -168,53 +168,8 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 
 ---
 
-## Adding New Queries
-
-When adding a new query to this repository:
-
-1. **Create the SQL file** in the appropriate blockchain directory
-2. **Include the standard header** (see [CLAUDE.md](../CLAUDE.md) for format)
-3. **Validate against schemas** in [`dune_database_schemas.md`](./dune_database_schemas.md)
-4. **Document in this file** following the template below
-
-### Query Documentation Template
-
-```markdown
-### query_name.sql
-
-**Path:** `queries/{blockchain}/query_name.sql`
-
-**Description:**
-[Brief description of what the query does]
-
-**Author:** [username]
-**Created:** [YYYY-MM-DD]
-
-#### Purpose
-[Why this query is useful]
-
-#### Dune Tables Used
-| Table | Purpose | Key Columns Used |
-|-------|---------|------------------|
-| `table.name` | [purpose] | `col1`, `col2` |
-
-#### Input Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `{{param}}` | TYPE | value | [description] |
-
-#### Output Schema
-| Column | Type | Description |
-|--------|------|-------------|
-| `column_name` | TYPE | [description] |
-
-#### Notes
-[Any special considerations, limitations, or usage notes]
-```
-
----
-
 ## See Also
 
+- [README.md](./README.md) - Contributing guidelines and query documentation template
 - [CLAUDE.md](../CLAUDE.md) - Development guidelines and query conventions
 - [dune_database_schemas.md](./dune_database_schemas.md) - Dune table schemas reference
