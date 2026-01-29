@@ -65,15 +65,28 @@ Estimate computational footprint before running expensive queries by checking ro
 
 ```
 DuneQueries/
-├── queries/           # Main query directory (by chain/category)
-│   ├── ethereum/      # Ethereum mainnet queries
-│   ├── polygon/       # Polygon queries
-│   ├── arbitrum/      # Arbitrum queries
-│   └── cross-chain/   # Multi-chain queries
-├── prompts/           # Dune AI prompts and outputs
-├── templates/         # Reusable query templates
-├── tests/             # Validation scripts
-└── scripts/           # Utility scripts
+├── .env.example           # Example environment variables (DUNE_API_KEY)
+├── queries/               # Main query directory
+│   ├── ethereum/          # Ethereum mainnet queries
+│   │   ├── defi/          # DeFi protocol queries
+│   │   ├── nft/           # NFT marketplace queries
+│   │   ├── tokens/        # Token analysis queries
+│   │   └── wallets/       # Wallet analysis queries
+│   ├── polygon/           # Polygon queries
+│   ├── arbitrum/          # Arbitrum queries
+│   ├── optimism/          # Optimism queries
+│   ├── solana/            # Solana queries
+│   └── cross-chain/       # Multi-chain queries
+├── prompts/               # Dune AI prompts and outputs
+├── templates/             # Reusable query templates
+├── tests/                 # Validation and smoke tests
+│   ├── smoke/             # Quick validation scripts
+│   └── schemas/           # Expected schema definitions
+├── scripts/               # Utility scripts
+│   ├── validate_query.sh  # Query validation script
+│   └── estimate_cost.sh   # Cost estimation script
+├── spells/                # Dune Spellbook contributions
+└── docs/                  # Additional documentation
 ```
 
 ## Quick Start
@@ -121,7 +134,10 @@ date_trunc('day', block_time) AS day
 |----------|------|
 | Dune Documentation | [docs.dune.com](https://docs.dune.com/) |
 | Dune AI Guide | [Wand Documentation](https://docs.dune.com/web-app/dune-ai) |
+| Dune AI Prompt Engineering | [Prompt Guide](https://docs.dune.com/learning/how-tos/dune-ai-prompt-engineering) |
 | Dune API | [API Reference](https://docs.dune.com/api-reference/overview) |
+| Dune Docs Index (LLMs) | [llms.txt](https://docs.dune.com/llms.txt) |
+| Data Tables Reference | [Blockchain Data](https://docs.dune.com/data-tables/) |
 | Spellbook | [GitHub](https://github.com/duneanalytics/spellbook) |
 | Trino SQL | [Documentation](https://trino.io/docs/current/) |
 
