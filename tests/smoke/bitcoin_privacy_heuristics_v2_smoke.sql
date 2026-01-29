@@ -6,6 +6,11 @@
 -- ============================================================
 
 WITH
+-- Get cutoff block height (last 100 blocks)
+block_cutoff AS (
+    SELECT MAX(height) - 100 AS min_height FROM bitcoin.blocks
+),
+
 -- Sample recent data (last 100 blocks for reliable data)
 raw_inputs AS (
     SELECT
@@ -15,7 +20,8 @@ raw_inputs AS (
         i.address AS input_address,
         i.type AS input_script_type
     FROM bitcoin.inputs i
-    WHERE i.block_height >= (SELECT MAX(block_height) - 100 FROM bitcoin.blocks)
+    CROSS JOIN block_cutoff bc
+    WHERE i.block_height >= bc.min_height
       AND i.is_coinbase = FALSE
 ),
 
@@ -27,7 +33,8 @@ raw_outputs AS (
         o.address AS output_address,
         o.type AS output_script_type
     FROM bitcoin.outputs o
-    WHERE o.block_height >= (SELECT MAX(block_height) - 100 FROM bitcoin.blocks)
+    CROSS JOIN block_cutoff bc
+    WHERE o.block_height >= bc.min_height
       AND o.type NOT IN ('nulldata', 'nonstandard', 'unknown')
 ),
 
