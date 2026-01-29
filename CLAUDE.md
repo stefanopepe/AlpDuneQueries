@@ -60,6 +60,8 @@ This repository follows a structured pipeline for developing and validating Dune
 
 Use the Dune API with curl to explore available tables, schemas, and data formats before writing queries.
 
+> **IMPORTANT:** Before making API calls, consult [`docs/dune_database_schemas.md`](./docs/dune_database_schemas.md) for a reliable offline reference of table schemas. This avoids dependency on Dune's documentation endpoints which can be unreliable.
+
 **Environment Setup:**
 ```bash
 export DUNE_API_KEY="your_api_key_here"
@@ -170,10 +172,29 @@ Before committing queries, run them through the validation environment to catch:
 - **Logic Errors** - Queries that run but produce incorrect results
 - **Performance Issues** - Queries that timeout or consume excessive resources
 
+#### Schema Validation Against Local Reference
+
+**CRITICAL:** Before committing any query, validate all table and column references against [`docs/dune_database_schemas.md`](./docs/dune_database_schemas.md).
+
+**AI Assistant Schema Validation Protocol:**
+1. **Extract all table references** from the query (e.g., `bitcoin.inputs`, `ethereum.transactions`)
+2. **Cross-check each table** exists in `docs/dune_database_schemas.md`
+3. **Verify all column names** used in SELECT, WHERE, JOIN, GROUP BY clauses match documented schemas
+4. **Check data types** are used correctly (e.g., VARBINARY for addresses, UINT256 for values)
+5. **Validate functions** are compatible with Trino/Presto SQL dialect
+
+**Common Hallucination Patterns to Catch:**
+- Invented column names (e.g., `tx_value` instead of `value`, `timestamp` instead of `block_time`)
+- Non-existent tables (e.g., `bitcoin.transactions.inputs` instead of `bitcoin.inputs`)
+- Wrong schema prefixes (e.g., `btc.` instead of `bitcoin.`)
+- Fabricated Spellbook tables (always verify against documented tables)
+- Incorrect function names (e.g., `TO_TIMESTAMP` instead of `date_trunc`)
+
 **Validation Checklist:**
 - [ ] Query executes without syntax errors
-- [ ] All referenced tables exist
-- [ ] All referenced columns exist in their tables
+- [ ] All referenced tables exist in `docs/dune_database_schemas.md`
+- [ ] All referenced columns exist in their documented table schemas
+- [ ] Data types match (addresses as VARBINARY, values as appropriate numeric types)
 - [ ] Results are non-empty (unless expected)
 - [ ] Results are reasonable (sanity check values)
 - [ ] Query completes within acceptable time
@@ -241,6 +262,8 @@ DuneQueries/
 ├── templates/             # Reusable query templates
 ├── spells/                # Dune Spellbook contributions
 └── docs/                  # Additional documentation
+    ├── dune_database_schemas.md  # Dune table schemas reference
+    └── queries_schemas.md        # Documentation of queries in this repo
 ```
 
 ## SQL Query Conventions
@@ -421,6 +444,10 @@ Use clear, descriptive commit messages:
 **Data References:**
 - [Blockchain Data Tables Reference](https://docs.dune.com/data-tables/)
 - [Dune Spellbook](https://github.com/duneanalytics/spellbook)
+
+**Local Documentation (Reliable Offline References):**
+- [`docs/dune_database_schemas.md`](./docs/dune_database_schemas.md) - Dune table schemas
+- [`docs/queries_schemas.md`](./docs/queries_schemas.md) - Repository query documentation
 
 **SQL Reference:**
 - [Trino SQL Documentation](https://trino.io/docs/current/)
