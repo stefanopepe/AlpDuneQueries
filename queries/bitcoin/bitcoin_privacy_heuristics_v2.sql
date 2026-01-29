@@ -212,9 +212,6 @@ tx_combined AS (
         tod.out2_value,
         tod.out1_type,
         tod.out2_type,
-        -- CoinJoin metrics
-        COALESCE(cj.total_outputs, 0) AS cj_total_outputs,
-        COALESCE(cj.max_equal_outputs, 0) AS cj_max_equal_outputs,
         -- Address reuse
         COALESCE(ar.has_address_reuse, FALSE) AS has_address_reuse
     FROM tx_input_stats i
