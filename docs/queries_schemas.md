@@ -213,8 +213,6 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 | `privacy_heuristic` | VARCHAR | The privacy issue detected |
 | `tx_count` | BIGINT | Number of transactions with this issue |
 | `sats_total` | DOUBLE | Total satoshis involved |
-| `avg_inputs` | DOUBLE | Average input count per transaction |
-| `avg_outputs` | DOUBLE | Average output count per transaction |
 
 #### Privacy Heuristic Classification
 
@@ -250,16 +248,16 @@ Identifies transactions where ≥50% of outputs share identical values, with at 
 #### Example Output
 
 ```
-| day        | privacy_heuristic   | tx_count | sats_total      | avg_inputs | avg_outputs |
-|------------|---------------------|----------|-----------------|------------|-------------|
-| 2026-01-28 | no_privacy_issues   | 312456   | 8765432109876   | 2.1        | 2.8         |
-| 2026-01-28 | change_precision    | 89234    | 2345678901234   | 2.3        | 2.0         |
-| 2026-01-28 | self_transfer       | 45678    | 1234567890123   | 1.8        | 1.0         |
-| 2026-01-28 | change_script_type  | 23456    | 567890123456    | 2.1        | 2.0         |
-| 2026-01-28 | coinjoin_detected   | 1234     | 987654321098    | 48.5       | 50.2        |
-| 2026-01-28 | address_reuse       | 5678     | 123456789012    | 3.2        | 4.1         |
-| 2026-01-28 | uih1                | 4567     | 234567890123    | 3.8        | 2.0         |
-| 2026-01-28 | uih2                | 1234     | 98765432109     | 4.2        | 2.0         |
+| day        | privacy_heuristic   | tx_count | sats_total      |
+|------------|---------------------|----------|-----------------|
+| 2026-01-28 | no_privacy_issues   | 312456   | 8765432109876   |
+| 2026-01-28 | change_precision    | 89234    | 2345678901234   |
+| 2026-01-28 | self_transfer       | 45678    | 1234567890123   |
+| 2026-01-28 | change_script_type  | 23456    | 567890123456    |
+| 2026-01-28 | coinjoin_detected   | 1234     | 987654321098    |
+| 2026-01-28 | address_reuse       | 5678     | 123456789012    |
+| 2026-01-28 | uih1                | 4567     | 234567890123    |
+| 2026-01-28 | uih2                | 1234     | 98765432109     |
 ```
 
 #### Query Structure
@@ -310,6 +308,7 @@ Identifies transactions where ≥50% of outputs share identical values, with at 
 #### Notes
 
 - **Heuristic Priority:** Heuristics are evaluated in order; a transaction is classified by the first matching heuristic
+- **Spendable Outputs Only:** Non-spendable outputs (OP_RETURN/nulldata, nonstandard) are excluded from analysis
 - **UIH Exclusion:** UIH checks skip transactions where all inputs share the same script type (legitimate consolidation)
 - **CoinJoin Threshold:** Requires ≥50% of outputs to be equal, capped between 2-5 matching outputs
 - **Precision Calculation:** Uses trailing zeros in satoshi values to estimate "roundness"

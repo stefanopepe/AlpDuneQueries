@@ -25,8 +25,6 @@
 --   privacy_heuristic     - The privacy issue detected
 --   tx_count              - Number of transactions
 --   sats_total            - Total satoshis involved
---   avg_inputs            - Average input count
---   avg_outputs           - Average output count
 -- ============================================================
 
 WITH
@@ -38,9 +36,7 @@ prev AS (
             day DATE,
             privacy_heuristic VARCHAR,
             tx_count BIGINT,
-            sats_total DOUBLE,
-            avg_inputs DOUBLE,
-            avg_outputs DOUBLE
+            sats_total DOUBLE
         )
     ))
 ),
@@ -68,7 +64,7 @@ raw_inputs AS (
       AND i.is_coinbase = FALSE
 ),
 
--- 4) Get all outputs with their details
+-- 4) Get all spendable outputs (exclude OP_RETURN and other non-spendable types)
 raw_outputs AS (
     SELECT
         CAST(date_trunc('day', o.block_time) AS DATE) AS day,
@@ -81,6 +77,7 @@ raw_outputs AS (
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', o.block_time) AS DATE) >= c.cutoff_day
       AND CAST(date_trunc('day', o.block_time) AS DATE) < CURRENT_DATE
+      AND o.type NOT IN ('nulldata', 'nonstandard')  -- Exclude OP_RETURN and non-spendable
 ),
 
 -- 5) Aggregate transaction-level input stats
@@ -296,9 +293,7 @@ new_data AS (
         day,
         privacy_heuristic,
         COUNT(*) AS tx_count,
-        SUM(total_input_value) AS sats_total,
-        AVG(input_count) AS avg_inputs,
-        AVG(output_count) AS avg_outputs
+        SUM(total_input_value) AS sats_total
     FROM classified
     GROUP BY day, privacy_heuristic
 ),
