@@ -1,60 +1,18 @@
 -- ============================================================
--- Query: Bitcoin Privacy Heuristics V2
--- Description: Implements advanced privacy analysis heuristics based on
---              Blockstream Esplora's privacy-analysis.js methodology.
---              Analyzes ONLY transactions classified as "other" by the
---              UTXO Heuristics query (query_6614095).
---              Detects: change outputs (precision/script mismatch), UIH,
---              and address reuse patterns.
--- Author: stefanopepe
--- Created: 2026-01-29
--- Updated: 2026-01-29
--- Reference: https://github.com/Blockstream/esplora/blob/master/client/src/lib/privacy-analysis.js
--- Dependency: Runs on "other" intent from query_6614095 (Bitcoin UTXO Heuristics)
--- Note: Uses incremental processing with 1-day lookback.
--- ============================================================
--- Privacy Heuristics Implemented:
---   1. change_precision    - Change detected via decimal precision difference (≥3 digits)
---   2. change_script_type  - Change detected via script type mismatch
---   3. uih1                - Unnecessary Input Heuristic 1 (smallest input covers smallest output)
---   4. uih2                - Unnecessary Input Heuristic 2 (smallest input covers largest output)
---   5. address_reuse       - Output script matches an input script
---   6. no_privacy_issues   - No heuristics triggered
--- Note: coinjoin_detected and self_transfer are handled by UTXO Heuristics layer
--- ============================================================
--- Output Columns:
---   day                   - Date of transactions
---   privacy_heuristic     - The privacy issue detected
---   tx_count              - Number of transactions
---   sats_total            - Total satoshis involved
---   avg_inputs            - Average input count
---   avg_outputs           - Average output count
+-- SMOKE TEST: Bitcoin Privacy Heuristics V2
+-- Purpose: Validate query logic on a small date range
+-- Usage: Run on Dune to verify no syntax errors and reasonable output
 -- ============================================================
 
 WITH
--- 1) Previous results (empty on first ever run)
-prev AS (
-    SELECT *
-    FROM TABLE(previous.query.result(
-        schema => DESCRIPTOR(
-            day DATE,
-            privacy_heuristic VARCHAR,
-            tx_count BIGINT,
-            sats_total DOUBLE,
-            avg_inputs DOUBLE,
-            avg_outputs DOUBLE
-        )
-    ))
-),
-
--- 2) Checkpoint: recompute from 1-day lookback
-checkpoint AS (
+-- Use fixed date range for testing (2 days)
+test_params AS (
     SELECT
-        COALESCE(MAX(day), DATE '2026-01-01') - INTERVAL '1' DAY AS cutoff_day
-    FROM prev
+        DATE '2026-01-27' AS start_date,
+        DATE '2026-01-29' AS end_date
 ),
 
--- 3) Get all non-coinbase inputs with their details
+-- 1) Get all non-coinbase inputs with their details
 raw_inputs AS (
     SELECT
         CAST(date_trunc('day', i.block_time) AS DATE) AS day,
@@ -64,13 +22,13 @@ raw_inputs AS (
         i.address AS input_address,
         i.type AS input_script_type
     FROM bitcoin.inputs i
-    CROSS JOIN checkpoint c
-    WHERE CAST(date_trunc('day', i.block_time) AS DATE) >= c.cutoff_day
-      AND CAST(date_trunc('day', i.block_time) AS DATE) < CURRENT_DATE
+    CROSS JOIN test_params p
+    WHERE CAST(date_trunc('day', i.block_time) AS DATE) >= p.start_date
+      AND CAST(date_trunc('day', i.block_time) AS DATE) < p.end_date
       AND i.is_coinbase = FALSE
 ),
 
--- 4) Get all outputs with their details
+-- 2) Get all outputs with their details
 raw_outputs AS (
     SELECT
         CAST(date_trunc('day', o.block_time) AS DATE) AS day,
@@ -80,12 +38,12 @@ raw_outputs AS (
         o.address AS output_address,
         o.type AS output_script_type
     FROM bitcoin.outputs o
-    CROSS JOIN checkpoint c
-    WHERE CAST(date_trunc('day', o.block_time) AS DATE) >= c.cutoff_day
-      AND CAST(date_trunc('day', o.block_time) AS DATE) < CURRENT_DATE
+    CROSS JOIN test_params p
+    WHERE CAST(date_trunc('day', o.block_time) AS DATE) >= p.start_date
+      AND CAST(date_trunc('day', o.block_time) AS DATE) < p.end_date
 ),
 
--- 5) Get tx-level input/output counts for UTXO classification
+-- 3) Get tx-level input/output counts for UTXO classification
 tx_counts AS (
     SELECT
         i.day,
@@ -97,7 +55,7 @@ tx_counts AS (
     GROUP BY i.day, i.tx_id
 ),
 
--- 6) Filter to "other" intent (exclude all UTXO-classified categories)
+-- 4) Filter to "other" intent (exclude all UTXO-classified categories)
 -- Mirrors classification logic from query_6614095 (Bitcoin UTXO Heuristics)
 other_tx_ids AS (
     SELECT day, tx_id, input_count, output_count
@@ -113,7 +71,7 @@ other_tx_ids AS (
     )
 ),
 
--- 7) Aggregate transaction-level input stats (filtered to "other" only)
+-- 5) Aggregate transaction-level input stats (filtered to "other" only)
 tx_input_stats AS (
     SELECT
         ri.day,
@@ -122,16 +80,14 @@ tx_input_stats AS (
         SUM(ri.input_value) AS total_input_value,
         MIN(ri.input_value) AS min_input_value,
         MAX(ri.input_value) AS max_input_value,
-        -- Collect distinct input script types
         ARRAY_AGG(DISTINCT ri.input_script_type) AS input_script_types,
-        -- Check if all inputs have same script type (for UIH exclusion)
         COUNT(DISTINCT ri.input_script_type) AS distinct_input_script_count
     FROM raw_inputs ri
     INNER JOIN other_tx_ids o ON ri.day = o.day AND ri.tx_id = o.tx_id
     GROUP BY ri.day, ri.tx_id
 ),
 
--- 8) Aggregate transaction-level output stats (filtered to "other" only)
+-- 6) Aggregate transaction-level output stats (filtered to "other" only)
 tx_output_stats AS (
     SELECT
         ro.day,
@@ -140,7 +96,6 @@ tx_output_stats AS (
         SUM(ro.output_value) AS total_output_value,
         MIN(ro.output_value) AS min_output_value,
         MAX(ro.output_value) AS max_output_value,
-        -- Collect distinct output script types
         ARRAY_AGG(DISTINCT ro.output_script_type) AS output_script_types,
         COUNT(DISTINCT ro.output_script_type) AS distinct_output_script_count
     FROM raw_outputs ro
@@ -148,7 +103,7 @@ tx_output_stats AS (
     GROUP BY ro.day, ro.tx_id
 ),
 
--- 9) For 2-output transactions, get individual output details for precision analysis
+-- 7) For 2-output transactions, get individual output details for precision analysis
 two_output_details AS (
     SELECT
         ro.day,
@@ -161,9 +116,7 @@ two_output_details AS (
     GROUP BY ro.day, ro.tx_id
 ),
 
--- Note: CoinJoin detection removed - handled by UTXO Heuristics (coinjoin_like)
-
--- 10) Detect address reuse: output address matches input address (filtered to "other" only)
+-- 8) Detect address reuse: output address matches input address (filtered to "other" only)
 address_reuse_detection AS (
     SELECT DISTINCT
         ri.day,
@@ -178,7 +131,7 @@ address_reuse_detection AS (
         AND ri.input_address IS NOT NULL
 ),
 
--- 11) Combine all data for classification
+-- 9) Combine all data for classification
 tx_combined AS (
     SELECT
         i.day,
@@ -195,12 +148,9 @@ tx_combined AS (
         COALESCE(o.max_output_value, 0) AS max_output_value,
         o.output_script_types,
         COALESCE(o.distinct_output_script_count, 0) AS distinct_output_script_count,
-        -- Fee calculation
         i.total_input_value - COALESCE(o.total_output_value, 0) AS fee,
-        -- Two-output details
         tod.output_values,
         tod.output_types,
-        -- Address reuse
         COALESCE(ar.has_address_reuse, FALSE) AS has_address_reuse
     FROM tx_input_stats i
     LEFT JOIN tx_output_stats o ON i.day = o.day AND i.tx_id = o.tx_id
@@ -208,26 +158,21 @@ tx_combined AS (
     LEFT JOIN address_reuse_detection ar ON i.day = ar.day AND i.tx_id = ar.tx_id
 ),
 
--- 12) Calculate precision for 2-output transactions
--- Precision = number of trailing zeros when expressed in satoshis
+-- 10) Calculate precision for 2-output transactions
 tx_with_precision AS (
     SELECT
         *,
-        -- For 2-output txs, calculate precision difference
         CASE
             WHEN output_count = 2 AND output_values IS NOT NULL THEN
                 ABS(
-                    -- Count trailing zeros for first output
                     COALESCE(LENGTH(CAST(output_values[1] AS VARCHAR))
                         - LENGTH(RTRIM(CAST(output_values[1] AS VARCHAR), '0')), 0)
                     -
-                    -- Count trailing zeros for second output
                     COALESCE(LENGTH(CAST(output_values[2] AS VARCHAR))
                         - LENGTH(RTRIM(CAST(output_values[2] AS VARCHAR), '0')), 0)
                 )
             ELSE 0
         END AS precision_diff,
-        -- Check if output script types differ
         CASE
             WHEN output_count = 2 AND output_types IS NOT NULL
                  AND output_types[1] != output_types[2] THEN TRUE
@@ -236,7 +181,7 @@ tx_with_precision AS (
     FROM tx_combined
 ),
 
--- 13) Apply all privacy heuristics
+-- 11) Apply all privacy heuristics
 classified AS (
     SELECT
         day,
@@ -246,70 +191,36 @@ classified AS (
         total_input_value,
         total_output_value,
         CASE
-            -- Skip malformed transactions
             WHEN output_count = 0 THEN 'malformed'
-
-            -- Note: coinjoin_detected removed - handled by UTXO Heuristics (coinjoin_like)
-            -- Note: self_transfer removed - handled by UTXO Heuristics (self_transfer)
-
-            -- For 2-output transactions, apply change detection heuristics
-            -- Change via Precision Loss: ≥3 digit difference in trailing zeros
             WHEN output_count = 2 AND precision_diff >= 3 THEN 'change_precision'
-
-            -- Change via Script Type Mismatch: different output types, one matches inputs
             WHEN output_count = 2
                  AND script_types_differ
                  AND distinct_input_script_count = 1
             THEN 'change_script_type'
-
-            -- UIH2: Smallest input unnecessary for largest output + fee
-            -- (exotic transaction motive)
             WHEN input_count >= 2
                  AND output_count = 2
-                 AND distinct_input_script_count > 1  -- Skip if all inputs same type
+                 AND distinct_input_script_count > 1
                  AND (total_input_value - min_input_value) >= (max_output_value + fee)
             THEN 'uih2'
-
-            -- UIH1: Smallest input unnecessary for smallest output + fee
-            -- (smallest output is likely change)
             WHEN input_count >= 2
                  AND output_count = 2
-                 AND distinct_input_script_count > 1  -- Skip if all inputs same type
+                 AND distinct_input_script_count > 1
                  AND (total_input_value - min_input_value) >= (min_output_value + fee)
             THEN 'uih1'
-
-            -- Address Reuse: Output goes to an address that was an input
             WHEN has_address_reuse THEN 'address_reuse'
-
-            -- No privacy issues detected
             ELSE 'no_privacy_issues'
         END AS privacy_heuristic
     FROM tx_with_precision
-),
-
--- 14) Aggregate by day and heuristic
-new_data AS (
-    SELECT
-        day,
-        privacy_heuristic,
-        COUNT(*) AS tx_count,
-        SUM(total_input_value) AS sats_total,
-        AVG(input_count) AS avg_inputs,
-        AVG(output_count) AS avg_outputs
-    FROM classified
-    GROUP BY day, privacy_heuristic
-),
-
--- 15) Keep historical data before cutoff
-kept_old AS (
-    SELECT p.*
-    FROM prev p
-    CROSS JOIN checkpoint c
-    WHERE p.day < c.cutoff_day
 )
 
--- 16) Final combined result
-SELECT * FROM kept_old
-UNION ALL
-SELECT * FROM new_data
+-- Final aggregation
+SELECT
+    day,
+    privacy_heuristic,
+    COUNT(*) AS tx_count,
+    SUM(total_input_value) AS sats_total,
+    AVG(input_count) AS avg_inputs,
+    AVG(output_count) AS avg_outputs
+FROM classified
+GROUP BY day, privacy_heuristic
 ORDER BY day, privacy_heuristic;
