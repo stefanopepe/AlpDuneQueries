@@ -68,11 +68,12 @@ spent_utxos_per_tx AS (
 ),
 
 -- 4) Get transaction-level input totals from bitcoin.transactions
+-- Note: input_value is already in BTC (not satoshis) in Dune's bitcoin.transactions
 tx_input_totals AS (
     SELECT
         CAST(date_trunc('day', t.block_time) AS DATE) AS day,
         t.id AS tx_id,
-        t.input_value AS input_value_sats
+        t.input_value AS input_value_btc
     FROM bitcoin.transactions t
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', t.block_time) AS DATE) >= c.cutoff_day
@@ -85,25 +86,25 @@ tx_cohorts AS (
     SELECT
         t.day,
         t.tx_id,
-        t.input_value_sats / 1e8 AS input_value_btc,
+        t.input_value_btc,
         CASE
-            WHEN t.input_value_sats / 1e8 < 1 THEN 'Shrimps (<1 BTC)'
-            WHEN t.input_value_sats / 1e8 < 10 THEN 'Crab (1-10 BTC)'
-            WHEN t.input_value_sats / 1e8 < 50 THEN 'Octopus (10-50 BTC)'
-            WHEN t.input_value_sats / 1e8 < 100 THEN 'Fish (50-100 BTC)'
-            WHEN t.input_value_sats / 1e8 < 500 THEN 'Dolphin (100-500 BTC)'
-            WHEN t.input_value_sats / 1e8 < 1000 THEN 'Shark (500-1,000 BTC)'
-            WHEN t.input_value_sats / 1e8 < 5000 THEN 'Whale (1,000-5,000 BTC)'
+            WHEN t.input_value_btc < 1 THEN 'Shrimps (<1 BTC)'
+            WHEN t.input_value_btc < 10 THEN 'Crab (1-10 BTC)'
+            WHEN t.input_value_btc < 50 THEN 'Octopus (10-50 BTC)'
+            WHEN t.input_value_btc < 100 THEN 'Fish (50-100 BTC)'
+            WHEN t.input_value_btc < 500 THEN 'Dolphin (100-500 BTC)'
+            WHEN t.input_value_btc < 1000 THEN 'Shark (500-1,000 BTC)'
+            WHEN t.input_value_btc < 5000 THEN 'Whale (1,000-5,000 BTC)'
             ELSE 'Humpback (>5,000 BTC)'
         END AS cohort,
         CASE
-            WHEN t.input_value_sats / 1e8 < 1 THEN 1
-            WHEN t.input_value_sats / 1e8 < 10 THEN 2
-            WHEN t.input_value_sats / 1e8 < 50 THEN 3
-            WHEN t.input_value_sats / 1e8 < 100 THEN 4
-            WHEN t.input_value_sats / 1e8 < 500 THEN 5
-            WHEN t.input_value_sats / 1e8 < 1000 THEN 6
-            WHEN t.input_value_sats / 1e8 < 5000 THEN 7
+            WHEN t.input_value_btc < 1 THEN 1
+            WHEN t.input_value_btc < 10 THEN 2
+            WHEN t.input_value_btc < 50 THEN 3
+            WHEN t.input_value_btc < 100 THEN 4
+            WHEN t.input_value_btc < 500 THEN 5
+            WHEN t.input_value_btc < 1000 THEN 6
+            WHEN t.input_value_btc < 5000 THEN 7
             ELSE 8
         END AS cohort_order
     FROM tx_input_totals t
