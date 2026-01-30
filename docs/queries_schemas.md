@@ -318,10 +318,11 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 **Dune Query ID:** TBD
 
 **Description:**
-Scores Bitcoin transactions on their likelihood of originating from human-controlled wallets versus automated systems (exchanges, bots, mining pools). Uses behavioral heuristics including transaction structure and value patterns.
+Scores Bitcoin transactions on their likelihood of originating from human-controlled wallets versus automated systems (exchanges, bots, mining pools). Uses behavioral heuristics including transaction structure, value patterns, and Bitcoin Days Destroyed (BDD) for holding time analysis.
 
 **Author:** stefanopepe
 **Created:** 2026-01-30
+**Updated:** 2026-01-30
 
 **Academic References:**
 - Meiklejohn et al. (2013) - Clustering heuristics, entity tagging
@@ -329,6 +330,7 @@ Scores Bitcoin transactions on their likelihood of originating from human-contro
 - Zhang et al. (2020) - Address reuse, clustering ratio
 - Schnoering et al. (2024) - Temporal evolution, false positive analysis
 - Niedermayer et al. (2024) - Bot detection taxonomy
+- Sornette et al. (2024) - BDD holding time power-law distributions
 
 #### Purpose
 
@@ -342,8 +344,8 @@ Enables analysts to:
 
 | Table | Purpose | Key Columns Used |
 |-------|---------|------------------|
-| `bitcoin.inputs` | Transaction inputs | `block_time`, `tx_id`, `value`, `is_coinbase` |
-| `bitcoin.outputs` | Output features | `block_time`, `tx_id`, `value` |
+| `bitcoin.inputs` | Transaction inputs, BDD calculation | `block_time`, `tx_id`, `value`, `block_height`, `spent_block_height`, `is_coinbase` |
+| `bitcoin.outputs` | Output features (dust, round values) | `block_time`, `tx_id`, `value` |
 
 #### Input Parameters
 
@@ -363,13 +365,15 @@ This query uses Dune's incremental processing with `previous.query.result()`. No
 | `high_fan_in` | input_count > 50 | -15 | Automated |
 | `high_fan_out` | output_count > 50 | -15 | Automated |
 | `round_values` | output divisible by 0.001 BTC | -5 | Automated |
-| `dust_output` | any output < 546 sats | -10 | Automated |
+| `dust_output` | any output < 0.00000546 BTC | -10 | Automated |
 | `simple_structure` | 1-in-1-out or 1-in-2-out | +10 | Human |
 | `non_round_value` | no round outputs | +5 | Human |
+| `moderate_holder` | avg days held 1-365 | +10 | Human |
+| `long_term_holder` | avg days held > 365 | +15 | Human |
 
 Final score clamped to [0, 100].
 
-**Note:** BDD-based indicators (`moderate_holder`, `long_term_holder`) were removed due to Dune schema limitations (`spent_output_index` column not available in `bitcoin.inputs`).
+**Note:** BDD calculation uses `spent_block_height` from `bitcoin.inputs` with approximation: `days_held = (block_height - spent_block_height) / 144`
 
 #### Output Schema
 
@@ -452,18 +456,19 @@ Final score clamped to [0, 100].
 #### Notes
 
 - **Academic Foundation:** Based on peer-reviewed research on blockchain entity classification
+- **BDD Calculation:** Uses `spent_block_height` to calculate holding time without expensive joins
 - **No Definitive Proof:** Score indicates *likelihood*, not certainty (per Schnoering et al., 2024)
 - **Incremental Design:** Designed for efficient daily updates with 1-day lookback recomputation
 - **Coinbase Exclusion:** Coinbase transactions (block rewards) are excluded since they don't represent user-initiated activity
+- **Value Units:** `bitcoin.inputs.value` and `bitcoin.outputs.value` are in BTC (not satoshis)
 - **Future Enhancement:** Label integration (exchange/mining/mixer tags) can be added when `labels.addresses` has Bitcoin coverage
-- **Future Enhancement:** BDD calculation can be added if Dune exposes `spent_output_index` in `bitcoin.inputs`
 
 #### Limitations
 
 1. No method definitively proves human control - score indicates likelihood only
 2. Privacy-preserving wallets (CoinJoin users) may score lower despite being human
 3. Sophisticated bots can mimic human patterns and defeat heuristics
-4. BDD (Bitcoin Days Destroyed) not currently available due to schema limitations
+4. BDD approximation uses 144 blocks = 1 day (actual block times vary)
 
 ---
 

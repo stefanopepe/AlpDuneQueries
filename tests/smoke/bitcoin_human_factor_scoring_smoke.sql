@@ -4,8 +4,6 @@
 --              scoring logic on a small sample of recent transactions.
 --              Scores transactions on likelihood of human origin.
 -- Usage: Copy/paste to Dune and run. Should complete in <30 seconds.
--- Note: BDD (Bitcoin Days Destroyed) calculation removed due to
---       schema limitations (spent_output_index not available).
 -- ============================================================
 
 WITH
@@ -15,10 +13,13 @@ block_cutoff AS (
 ),
 
 -- Raw inputs for block range (non-coinbase only)
+-- Note: value is in BTC, spent_block_height enables BDD calculation
 raw_inputs AS (
     SELECT
         i.tx_id,
-        i.value AS input_value_sats
+        i.block_height,
+        i.spent_block_height,
+        i.value AS input_value_btc
     FROM bitcoin.inputs i
     CROSS JOIN block_cutoff bc
     WHERE i.block_height >= bc.min_height
@@ -26,21 +27,30 @@ raw_inputs AS (
 ),
 
 -- Raw outputs for block range
+-- Note: value is in BTC
 raw_outputs AS (
     SELECT
         o.tx_id,
-        o.value AS output_value_sats
+        o.value AS output_value_btc
     FROM bitcoin.outputs o
     CROSS JOIN block_cutoff bc
     WHERE o.block_height >= bc.min_height
 ),
 
--- Aggregate input features per transaction
+-- Aggregate input features per transaction (including BDD)
 tx_input_stats AS (
     SELECT
         tx_id,
         COUNT(*) AS input_count,
-        SUM(input_value_sats) AS total_input_sats
+        SUM(input_value_btc) AS total_input_btc,
+        -- BDD calculation: days_held = (current_block - origin_block) / 144
+        AVG(
+            CASE
+                WHEN spent_block_height IS NOT NULL
+                THEN (block_height - spent_block_height) / 144.0
+                ELSE NULL
+            END
+        ) AS avg_days_held
     FROM raw_inputs
     GROUP BY tx_id
 ),
@@ -50,11 +60,10 @@ tx_output_stats AS (
     SELECT
         tx_id,
         COUNT(*) AS output_count,
-        SUM(output_value_sats) AS total_output_sats,
-        -- Dust detection: outputs < 546 satoshis
-        SUM(CASE WHEN output_value_sats < 546 THEN 1 ELSE 0 END) AS dust_count,
-        -- Round value detection: divisible by 0.001 BTC (100,000 sats)
-        SUM(CASE WHEN output_value_sats % 100000 = 0 AND output_value_sats > 0 THEN 1 ELSE 0 END) AS round_value_count
+        -- Dust detection: outputs < 546 sats = 0.00000546 BTC
+        SUM(CASE WHEN output_value_btc < 0.00000546 THEN 1 ELSE 0 END) AS dust_count,
+        -- Round value detection: divisible by 0.001 BTC
+        SUM(CASE WHEN output_value_btc > 0 AND ABS(output_value_btc * 1000 - ROUND(output_value_btc * 1000)) < 0.0000001 THEN 1 ELSE 0 END) AS round_value_count
     FROM raw_outputs
     GROUP BY tx_id
 ),
@@ -65,7 +74,8 @@ tx_combined AS (
         i.tx_id,
         i.input_count,
         COALESCE(o.output_count, 0) AS output_count,
-        i.total_input_sats,
+        i.total_input_btc,
+        i.avg_days_held,
         COALESCE(o.dust_count, 0) AS dust_count,
         COALESCE(o.round_value_count, 0) AS round_value_count,
         -- Derived boolean features
@@ -80,26 +90,31 @@ tx_combined AS (
 ),
 
 -- Calculate human factor score per transaction
--- Note: BDD-based indicators removed (spent_output_index not available)
 tx_scored AS (
     SELECT
         tx_id,
         input_count,
         output_count,
-        total_input_sats,
+        total_input_btc,
+        avg_days_held,
         is_high_fan_in,
         is_high_fan_out,
         has_dust,
         has_round_values,
         is_simple_structure,
-        -- Calculate raw score (without BDD indicators)
+        -- Calculate raw score
         50  -- BASE_SCORE
+        -- NEGATIVE INDICATORS
         + CASE WHEN is_high_fan_in THEN -15 ELSE 0 END
         + CASE WHEN is_high_fan_out THEN -15 ELSE 0 END
         + CASE WHEN has_round_values THEN -5 ELSE 0 END
         + CASE WHEN has_dust THEN -10 ELSE 0 END
+        -- POSITIVE INDICATORS
         + CASE WHEN is_simple_structure THEN 10 ELSE 0 END
         + CASE WHEN NOT has_round_values THEN 5 ELSE 0 END
+        -- BDD-BASED INDICATORS
+        + CASE WHEN avg_days_held >= 1 AND avg_days_held < 365 THEN 10 ELSE 0 END  -- moderate holder
+        + CASE WHEN avg_days_held >= 365 THEN 15 ELSE 0 END  -- long-term holder
         AS raw_score
     FROM tx_combined
 ),
@@ -110,7 +125,8 @@ tx_with_bands AS (
         tx_id,
         input_count,
         output_count,
-        total_input_sats / 1e8 AS btc_volume,
+        total_input_btc AS btc_volume,
+        avg_days_held,
         GREATEST(0, LEAST(100, raw_score)) AS human_factor_score,
         CASE
             WHEN GREATEST(0, LEAST(100, raw_score)) < 10 THEN '0-10'

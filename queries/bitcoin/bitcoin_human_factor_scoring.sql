@@ -3,18 +3,17 @@
 -- Description: Scores Bitcoin transactions on likelihood of
 --              originating from human-controlled wallets vs
 --              automated systems (exchanges, bots, mining pools).
---              Uses behavioral heuristics based on tx structure.
+--              Uses behavioral heuristics and Bitcoin Days Destroyed.
 --              Score range: 0 (automated) to 100 (human).
 --              Uses incremental processing with 1-day lookback.
 -- Author: stefanopepe
 -- Created: 2026-01-30
 -- Updated: 2026-01-30
 -- Reference: Meiklejohn et al. (2013), Ermilov et al. (2017),
---            Zhang et al. (2020), Schnoering et al. (2024)
+--            Zhang et al. (2020), Schnoering et al. (2024),
+--            Sornette et al. (2024) - BDD holding time analysis
 -- Note: On first run, only processes data from fallback date onwards.
 --       Adjust DATE '2026-01-01' in checkpoint CTE for historical analysis.
---       BDD calculation removed due to schema limitations
---       (spent_output_index column not available in bitcoin.inputs).
 -- ============================================================
 -- Scoring Model:
 --   BASE_SCORE = 50 (neutral)
@@ -26,6 +25,8 @@
 --   Positive (human signals):
 --     simple_structure (1-in-1-out or 1-in-2-out): +10
 --     non_round_value: +5
+--     moderate_holder (1-365 days): +10
+--     long_term_holder (>365 days): +15
 --   Final score clamped to [0, 100]
 -- ============================================================
 -- Score Band Interpretation:
@@ -33,7 +34,7 @@
 --   30-50: Probably automated
 --   50-60: Ambiguous / uncertain
 --   60-80: Likely human-controlled
---   80-100: Strong human indicators
+--   80-100: Strong human indicators (HODLer)
 -- ============================================================
 -- Output Columns:
 --   day             - Date of transactions
@@ -68,11 +69,14 @@ checkpoint AS (
 ),
 
 -- 3) Raw inputs for date range (non-coinbase only)
+-- Note: value is in BTC, spent_block_height enables BDD calculation
 raw_inputs AS (
     SELECT
         CAST(date_trunc('day', i.block_time) AS DATE) AS day,
         i.tx_id,
-        i.value AS input_value_sats
+        i.block_height,
+        i.spent_block_height,
+        i.value AS input_value_btc
     FROM bitcoin.inputs i
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', i.block_time) AS DATE) >= c.cutoff_day
@@ -81,24 +85,33 @@ raw_inputs AS (
 ),
 
 -- 4) Raw outputs for date range
+-- Note: value is in BTC
 raw_outputs AS (
     SELECT
         CAST(date_trunc('day', o.block_time) AS DATE) AS day,
         o.tx_id,
-        o.value AS output_value_sats
+        o.value AS output_value_btc
     FROM bitcoin.outputs o
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', o.block_time) AS DATE) >= c.cutoff_day
       AND CAST(date_trunc('day', o.block_time) AS DATE) < CURRENT_DATE
 ),
 
--- 5) Aggregate input features per transaction
+-- 5) Aggregate input features per transaction (including BDD)
 tx_input_stats AS (
     SELECT
         day,
         tx_id,
         COUNT(*) AS input_count,
-        SUM(input_value_sats) AS total_input_sats
+        SUM(input_value_btc) AS total_input_btc,
+        -- BDD calculation: days_held = (current_block - origin_block) / 144
+        AVG(
+            CASE
+                WHEN spent_block_height IS NOT NULL
+                THEN (block_height - spent_block_height) / 144.0
+                ELSE NULL
+            END
+        ) AS avg_days_held
     FROM raw_inputs
     GROUP BY day, tx_id
 ),
@@ -109,11 +122,10 @@ tx_output_stats AS (
         day,
         tx_id,
         COUNT(*) AS output_count,
-        SUM(output_value_sats) AS total_output_sats,
-        -- Dust detection: outputs < 546 satoshis
-        SUM(CASE WHEN output_value_sats < 546 THEN 1 ELSE 0 END) AS dust_count,
-        -- Round value detection: divisible by 0.001 BTC (100,000 sats)
-        SUM(CASE WHEN output_value_sats % 100000 = 0 AND output_value_sats > 0 THEN 1 ELSE 0 END) AS round_value_count
+        -- Dust detection: outputs < 546 sats = 0.00000546 BTC
+        SUM(CASE WHEN output_value_btc < 0.00000546 THEN 1 ELSE 0 END) AS dust_count,
+        -- Round value detection: divisible by 0.001 BTC
+        SUM(CASE WHEN output_value_btc > 0 AND ABS(output_value_btc * 1000 - ROUND(output_value_btc * 1000)) < 0.0000001 THEN 1 ELSE 0 END) AS round_value_count
     FROM raw_outputs
     GROUP BY day, tx_id
 ),
@@ -125,7 +137,8 @@ tx_combined AS (
         i.tx_id,
         i.input_count,
         COALESCE(o.output_count, 0) AS output_count,
-        i.total_input_sats,
+        i.total_input_btc,
+        i.avg_days_held,
         COALESCE(o.dust_count, 0) AS dust_count,
         COALESCE(o.round_value_count, 0) AS round_value_count,
         -- Derived boolean features
@@ -148,7 +161,8 @@ tx_scored AS (
         tx_id,
         input_count,
         output_count,
-        total_input_sats,
+        total_input_btc,
+        avg_days_held,
         -- Calculate raw score
         50  -- BASE_SCORE
         -- NEGATIVE INDICATORS (reduce score = more automated)
@@ -159,6 +173,9 @@ tx_scored AS (
         -- POSITIVE INDICATORS (increase score = more human)
         + CASE WHEN is_simple_structure THEN 10 ELSE 0 END
         + CASE WHEN NOT has_round_values THEN 5 ELSE 0 END  -- non-round value bonus
+        -- BDD-BASED INDICATORS (holding behavior)
+        + CASE WHEN avg_days_held >= 1 AND avg_days_held < 365 THEN 10 ELSE 0 END  -- moderate holder
+        + CASE WHEN avg_days_held >= 365 THEN 15 ELSE 0 END  -- long-term holder
         AS raw_score
     FROM tx_combined
 ),
@@ -168,7 +185,7 @@ tx_with_bands AS (
     SELECT
         day,
         tx_id,
-        total_input_sats,
+        total_input_btc,
         GREATEST(0, LEAST(100, raw_score)) AS human_factor_score,
         CASE
             WHEN GREATEST(0, LEAST(100, raw_score)) < 10 THEN '0-10'
@@ -204,7 +221,7 @@ new_data AS (
         score_band,
         score_band_order,
         COUNT(*) AS tx_count,
-        SUM(total_input_sats) / 1e8 AS btc_volume,  -- Convert satoshis to BTC
+        SUM(total_input_btc) AS btc_volume,
         AVG(human_factor_score) AS avg_score
     FROM tx_with_bands
     GROUP BY day, score_band, score_band_order
