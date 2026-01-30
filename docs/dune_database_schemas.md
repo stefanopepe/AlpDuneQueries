@@ -158,9 +158,9 @@ All Bitcoin transactions.
 | `index` | BIGINT | Index within block |
 | `input_count` | BIGINT | Number of inputs |
 | `output_count` | BIGINT | Number of outputs |
-| `input_value` | BIGINT | Total input value (satoshis) |
-| `output_value` | BIGINT | Total output value (satoshis) |
-| `fee` | BIGINT | Transaction fee (satoshis) |
+| `input_value` | DOUBLE | Total input value (BTC) |
+| `output_value` | DOUBLE | Total output value (BTC) |
+| `fee` | DOUBLE | Transaction fee (BTC) |
 | `size` | BIGINT | Transaction size (bytes) |
 | `virtual_size` | BIGINT | Virtual size (vbytes) |
 | `is_coinbase` | BOOLEAN | Is coinbase transaction |
