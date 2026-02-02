@@ -349,4 +349,4 @@ kept_old AS (
 SELECT * FROM kept_old
 UNION ALL
 SELECT * FROM new_data
-ORDER BY day, tx_id;
+ORDER BY day, tx_id

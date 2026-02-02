@@ -157,7 +157,7 @@ SELECT
     ROUND(AVG(human_factor_score), 1) AS avg_score
 FROM tx_final
 GROUP BY score_band, score_band_order, cohort, cohort_order
-ORDER BY score_band_order, cohort_order;
+ORDER BY score_band_order, cohort_order
 
 -- 2. Matrix Dimensions Check (uncomment to verify 10 bands × 8 cohorts max)
 -- SELECT

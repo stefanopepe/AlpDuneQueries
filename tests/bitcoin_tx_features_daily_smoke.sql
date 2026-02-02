@@ -198,7 +198,7 @@ SELECT
     ROUND(MAX(total_input_btc), 4) AS max_btc
 FROM tx_final
 GROUP BY score_band
-ORDER BY score_band;
+ORDER BY score_band
 
 -- 2. Cohort Distribution (uncomment to test)
 -- SELECT cohort, COUNT(*) AS tx_count, ROUND(SUM(total_input_btc), 2) AS total_btc
