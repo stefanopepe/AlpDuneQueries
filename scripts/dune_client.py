@@ -90,7 +90,7 @@ def execute_sql(
         # Execute and wait for results
         result = client.run_sql(
             query_sql=sql,
-            query_parameters=query_params if query_params else None,
+            params=query_params if query_params else None,
         )
 
         # Extract result data
@@ -106,8 +106,11 @@ def execute_sql(
             rows=rows,
             columns=columns,
             row_count=len(rows),
-            execution_time_ms=result.execution_ended_at.timestamp() * 1000
-            if result.execution_ended_at
+            execution_time_ms=int(
+                (result.times.execution_ended_at.timestamp()
+                 - result.times.execution_started_at.timestamp()) * 1000
+            )
+            if result.times and result.times.execution_ended_at
             else None,
         )
 
@@ -151,11 +154,11 @@ def execute_query(
 
     try:
         # Create query reference and execute
-        query = QueryBase(query_id=query_id)
-        result = client.run_query(
-            query=query,
-            query_parameters=query_params if query_params else None,
+        query = QueryBase(
+            query_id=query_id,
+            params=query_params if query_params else None,
         )
+        result = client.run_query(query=query)
 
         # Extract result data
         rows = result.result.rows if result.result else []
@@ -170,8 +173,11 @@ def execute_query(
             rows=rows,
             columns=columns,
             row_count=len(rows),
-            execution_time_ms=result.execution_ended_at.timestamp() * 1000
-            if result.execution_ended_at
+            execution_time_ms=int(
+                (result.times.execution_ended_at.timestamp()
+                 - result.times.execution_started_at.timestamp()) * 1000
+            )
+            if result.times and result.times.execution_ended_at
             else None,
         )
 
