@@ -28,6 +28,8 @@
 -- Parameters:
 --   {{start_date}} - Analysis start date (default: 30 days ago)
 --   {{end_date}}   - Analysis end date (default: today)
+--   {{score_bands}} - Comma-separated list of score bands to keep
+--                     (manual list parameter; default: all 10 bands)
 -- ============================================================
 -- Output Columns:
 --   day              - Date of transactions
@@ -39,6 +41,13 @@
 --   btc_volume       - Total BTC moved
 --   avg_score        - Average score in segment
 -- ============================================================
+
+WITH selected_bands AS (
+    -- Dune list/enum parameters render as a comma-separated string.
+    -- Split and trim to make them usable in the WHERE clause.
+    SELECT TRIM(band) AS band
+    FROM UNNEST(SPLIT('{{score_bands}}', ',')) AS t(band)
+)
 
 SELECT
     day,
@@ -52,5 +61,6 @@ SELECT
 FROM query_<BASE_QUERY_ID>
 WHERE day >= DATE '{{start_date}}'
   AND day < DATE '{{end_date}}'
+  AND score_band IN (SELECT band FROM selected_bands)
 GROUP BY day, score_band, score_band_order, cohort, cohort_order
 ORDER BY day, score_band_order, cohort_order
