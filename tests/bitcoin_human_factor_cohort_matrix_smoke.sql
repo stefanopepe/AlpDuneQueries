@@ -29,10 +29,33 @@ raw_inputs AS (
 raw_outputs AS (
     SELECT
         o.tx_id,
-        o.value AS output_value_btc
+        o.value AS output_value_btc,
+        o.type AS output_type,
+        o.address AS output_address
     FROM bitcoin.outputs o
     CROSS JOIN block_cutoff bc
     WHERE o.block_height >= bc.min_height
+),
+
+-- Transaction fees (input_value - output_value)
+tx_fees AS (
+    SELECT
+        i.tx_id,
+        SUM(i.input_value_btc) - COALESCE(SUM(o.output_value_btc), 0) AS fee_btc
+    FROM raw_inputs i
+    LEFT JOIN raw_outputs o ON i.tx_id = o.tx_id
+    GROUP BY i.tx_id
+),
+
+-- Privacy flags: address reuse and output type mismatch
+tx_privacy AS (
+    SELECT
+        tx_id,
+        COUNT(DISTINCT output_address) < COUNT(*) AS has_address_reuse,
+        COUNT(DISTINCT output_type) > 1 AS output_type_mismatch
+    FROM raw_outputs
+    WHERE output_address IS NOT NULL
+    GROUP BY tx_id
 ),
 
 -- Aggregate input features per transaction
@@ -87,12 +110,15 @@ tx_scored AS (
     LEFT JOIN tx_output_stats o ON i.tx_id = o.tx_id
 ),
 
--- Add bands and cohorts
+-- Add bands, cohorts, fees, and privacy flags
 tx_final AS (
     SELECT
-        tx_id,
-        total_input_btc,
-        human_factor_score,
+        s.tx_id,
+        s.total_input_btc,
+        s.human_factor_score,
+        f.fee_btc,
+        COALESCE(p.has_address_reuse, FALSE) AS has_address_reuse,
+        COALESCE(p.output_type_mismatch, FALSE) AS output_type_mismatch,
         -- Score band
         CASE
             WHEN human_factor_score < 10 THEN '0-10'
@@ -139,14 +165,16 @@ tx_final AS (
             WHEN total_input_btc < 5000 THEN 7
             ELSE 8
         END AS cohort_order
-    FROM tx_scored
+    FROM tx_scored s
+    LEFT JOIN tx_fees f ON s.tx_id = f.tx_id
+    LEFT JOIN tx_privacy p ON s.tx_id = p.tx_id
 )
 
 -- ============================================================
 -- VALIDATION QUERIES - Uncomment one at a time to test
 -- ============================================================
 
--- 1. Cross-tabulation Matrix (main output)
+-- 1. Cross-tabulation Matrix (main output with fee and privacy metrics)
 SELECT
     score_band,
     score_band_order,
@@ -154,7 +182,14 @@ SELECT
     cohort_order,
     COUNT(*) AS tx_count,
     ROUND(SUM(total_input_btc), 4) AS btc_volume,
-    ROUND(AVG(human_factor_score), 1) AS avg_score
+    ROUND(AVG(human_factor_score), 1) AS avg_score,
+    -- Fee analysis metrics
+    ROUND(AVG(fee_btc), 8) AS avg_fee_btc,
+    ROUND(SUM(fee_btc), 4) AS total_fee_btc,
+    -- Privacy metrics
+    SUM(CASE WHEN has_address_reuse THEN 1 ELSE 0 END) AS tx_with_address_reuse,
+    SUM(CASE WHEN output_type_mismatch THEN 1 ELSE 0 END) AS tx_with_output_mismatch,
+    ROUND(100.0 * SUM(CASE WHEN has_address_reuse THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS pct_address_reuse
 FROM tx_final
 GROUP BY score_band, score_band_order, cohort, cohort_order
 ORDER BY score_band_order, cohort_order
@@ -178,3 +213,27 @@ ORDER BY score_band_order, cohort_order
 
 -- 5. Sample Transactions
 -- SELECT * FROM tx_final LIMIT 10;
+
+-- ============================================================
+-- 6. Parameter Date Range Validation
+--    (Tests that nested query respects {{start_date}}/{{end_date}})
+-- NOTE: To test this, you must create a Dune query from
+--       bitcoin_human_factor_cohort_matrix.sql with parameters configured,
+--       then reference it here as query_YOUR_ID
+--
+-- WITH date_filtered AS (
+--     SELECT * FROM query_YOUR_ID
+--     WHERE day >= DATE '2026-02-01' AND day < DATE '2026-02-06'
+-- )
+-- SELECT
+--     MIN(day) AS first_day,
+--     MAX(day) AS last_day,
+--     COUNT(DISTINCT day) AS day_count,
+--     COUNT(*) AS total_cells
+-- FROM date_filtered;
+--
+-- EXPECTED:
+--   first_day = 2026-02-01
+--   last_day = 2026-02-05
+--   day_count = 5
+-- ============================================================
