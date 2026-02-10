@@ -6,9 +6,13 @@
 --              backward compatibility.
 -- Author: stefanopepe
 -- Created: 2026-02-02
--- Updated: 2026-02-02
+-- Updated: 2026-02-10
 -- Architecture: 1-level nested query on bitcoin_tx_features_daily
--- Base Query: query_<BASE_QUERY_ID> (bitcoin_tx_features_daily)
+-- Base Query: query_6638509 (bitcoin_tx_features_daily)
+-- ============================================================
+-- Parameters:
+--   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
+--   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
 -- ============================================================
 -- Cohort Definitions (by total tx input value in BTC):
 --   Shrimps    - < 1 BTC
@@ -36,6 +40,8 @@ SELECT
     SUM(total_input_btc) AS btc_moved,
     COUNT(*) AS tx_count,
     SUM(input_count) AS spent_utxo_count
-FROM query_<BASE_QUERY_ID>
+FROM query_6638509
+WHERE day >= DATE '{{start_date}}'
+  AND day < DATE '{{end_date}}'
 GROUP BY day, cohort, cohort_order
 ORDER BY day, cohort_order

@@ -6,9 +6,13 @@
 --              Simplified version - uses flags computed in base query.
 -- Author: stefanopepe
 -- Created: 2026-02-02
--- Updated: 2026-02-02
+-- Updated: 2026-02-10
 -- Architecture: 1-level nested query on bitcoin_tx_features_daily
--- Base Query: query_<BASE_QUERY_ID> (bitcoin_tx_features_daily)
+-- Base Query: query_6638509 (bitcoin_tx_features_daily)
+-- ============================================================
+-- Parameters:
+--   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
+--   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
 -- ============================================================
 -- Privacy Heuristics Detected:
 --   address_reuse       - Output address matches an input address
@@ -34,8 +38,10 @@ SELECT
     END AS privacy_heuristic,
     COUNT(*) AS tx_count,
     SUM(total_input_btc) AS sats_total
-FROM query_<BASE_QUERY_ID>
+FROM query_6638509
 WHERE intent = 'other'
+  AND day >= DATE '{{start_date}}'
+  AND day < DATE '{{end_date}}'
 GROUP BY day,
     CASE
         WHEN has_address_reuse THEN 'address_reuse'
