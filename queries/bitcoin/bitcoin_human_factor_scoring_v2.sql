@@ -11,8 +11,8 @@
 -- Base Query: query_6638509 (bitcoin_tx_features_daily)
 -- ============================================================
 -- Parameters:
---   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
---   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
+--   {{start_date}} - Analysis start date (Dune date picker)
+--   {{end_date}}   - Analysis end date (Dune date picker)
 -- ============================================================
 -- Scoring Model (computed in base query):
 --   BASE_SCORE = 50 (neutral)
@@ -52,7 +52,7 @@ SELECT
     SUM(total_input_btc) AS btc_volume,
     AVG(human_factor_score) AS avg_score
 FROM query_6638509
-WHERE day >= DATE '{{start_date}}'
-  AND day < DATE '{{end_date}}'
+WHERE day >= CAST('{{start_date}}' AS TIMESTAMP)
+  AND day < CAST('{{end_date}}' AS TIMESTAMP)
 GROUP BY day, score_band, score_band_order
 ORDER BY day, score_band_order

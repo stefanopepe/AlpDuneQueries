@@ -11,8 +11,8 @@
 -- Base Query: query_6638509 (bitcoin_tx_features_daily)
 -- ============================================================
 -- Parameters:
---   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
---   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
+--   {{start_date}} - Analysis start date (Dune date picker)
+--   {{end_date}}   - Analysis end date (Dune date picker)
 -- ============================================================
 -- Privacy Heuristics Detected:
 --   address_reuse       - Output address matches an input address
@@ -40,8 +40,8 @@ SELECT
     SUM(total_input_btc) AS sats_total
 FROM query_6638509
 WHERE intent = 'other'
-  AND day >= DATE '{{start_date}}'
-  AND day < DATE '{{end_date}}'
+  AND day >= CAST('{{start_date}}' AS TIMESTAMP)
+  AND day < CAST('{{end_date}}' AS TIMESTAMP)
 GROUP BY day,
     CASE
         WHEN has_address_reuse THEN 'address_reuse'

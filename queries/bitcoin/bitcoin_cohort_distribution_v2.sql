@@ -11,8 +11,8 @@
 -- Base Query: query_6638509 (bitcoin_tx_features_daily)
 -- ============================================================
 -- Parameters:
---   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
---   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
+--   {{start_date}} - Analysis start date (Dune date picker)
+--   {{end_date}}   - Analysis end date (Dune date picker)
 -- ============================================================
 -- Cohort Definitions (by total tx input value in BTC):
 --   Shrimps    - < 1 BTC
@@ -41,7 +41,7 @@ SELECT
     COUNT(*) AS tx_count,
     SUM(input_count) AS spent_utxo_count
 FROM query_6638509
-WHERE day >= DATE '{{start_date}}'
-  AND day < DATE '{{end_date}}'
+WHERE day >= CAST('{{start_date}}' AS TIMESTAMP)
+  AND day < CAST('{{end_date}}' AS TIMESTAMP)
 GROUP BY day, cohort, cohort_order
 ORDER BY day, cohort_order

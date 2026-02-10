@@ -22,8 +22,8 @@
 --         'Shark (500-1,000 BTC)'
 --         'Whale (1,000-5,000 BTC)'
 --         'Humpback (>5,000 BTC)'
---   {{start_date}} - Analysis start date (DATE format: '2026-01-07')
---   {{end_date}}   - Analysis end date (DATE format: '2026-02-10')
+--   {{start_date}} - Analysis start date (Dune date picker)
+--   {{end_date}}   - Analysis end date (Dune date picker)
 -- ============================================================
 -- Output Columns:
 --   day                     - Date (dense: every day in range)
@@ -50,8 +50,8 @@ WITH
 days AS (
     SELECT day
     FROM UNNEST(SEQUENCE(
-        DATE '{{start_date}}',
-        DATE '{{end_date}}' - INTERVAL '1' DAY,
+        CAST('{{start_date}}' AS DATE),
+        CAST('{{end_date}}' AS DATE) - INTERVAL '1' DAY,
         INTERVAL '1' DAY
     )) AS t(day)
 ),
