@@ -50,8 +50,8 @@ WITH
 days AS (
     SELECT day
     FROM UNNEST(SEQUENCE(
-        CAST('{{start_date}}' AS DATE),
-        CAST('{{end_date}}' AS DATE) - INTERVAL '1' DAY,
+        CAST(substr('{{start_date}}', 1, 10) AS DATE),
+        CAST(substr('{{end_date}}',   1, 10) AS DATE) - INTERVAL '1' DAY,
         INTERVAL '1' DAY
     )) AS t(day)
 ),
@@ -105,10 +105,10 @@ SELECT
     s.day,
     s.score_band,
     s.score_band_order,
-    {{cohort_filter}} AS cohort,
+    '{{cohort_filter}}' AS cohort,
     COALESCE(
         f.cohort_order,
-        CASE {{cohort_filter}}
+        CASE '{{cohort_filter}}'
             WHEN 'Shrimps (<1 BTC)' THEN 1
             WHEN 'Crab (1-10 BTC)' THEN 2
             WHEN 'Octopus (10-50 BTC)' THEN 3
