@@ -152,7 +152,7 @@
       "architecture": "v2",
       "smoke_test": "tests/lending_action_ledger_unified_smoke.sql",
       "dependencies": [],
-      "description": "Multi-protocol unified action ledger (Morpho, Aave V3, Compound V2)"
+      "description": "Multi-protocol unified stablecoin action ledger (Morpho, Aave V3, Compound V2) with amounts and liquidations"
     },
     {
       "name": "lending_entity_balance_sheet",
@@ -172,7 +172,7 @@
       "dune_query_id": null,
       "type": "nested",
       "architecture": "v2",
-      "smoke_test": null,
+      "smoke_test": "tests/lending_flow_stitching_smoke.sql",
       "dependencies": [
         "lending_action_ledger_unified"
       ],
@@ -184,7 +184,7 @@
       "dune_query_id": null,
       "type": "nested",
       "architecture": "v2",
-      "smoke_test": null,
+      "smoke_test": "tests/lending_loop_detection_smoke.sql",
       "dependencies": [
         "lending_flow_stitching"
       ],
