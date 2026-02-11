@@ -97,7 +97,7 @@ filtered AS (
         tx_with_output_mismatch,
         pct_address_reuse
     FROM query_6663464
-    WHERE cohort = {{cohort_filter}}
+    WHERE cohort = '{{cohort_filter}}'
 )
 
 -- Zero-fill: LEFT JOIN spine to filtered data
