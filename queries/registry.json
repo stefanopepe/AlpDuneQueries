@@ -226,6 +226,29 @@
         "lending_action_ledger_unified"
       ],
       "description": "Time-ordered per-entity loop traces with running totals"
+    },
+    {
+      "name": "lending_collateral_ledger",
+      "file": "queries/ethereum/lending/lending_collateral_ledger.sql",
+      "dune_query_id": null,
+      "type": "base",
+      "architecture": "v2",
+      "smoke_test": "tests/lending_collateral_ledger_smoke.sql",
+      "dependencies": [],
+      "description": "Multi-protocol collateral event ledger (WBTC, WETH, wstETH, weETH, rETH, cbETH) tracking what backs stablecoin borrows"
+    },
+    {
+      "name": "lending_loop_collateral_profile",
+      "file": "queries/ethereum/lending/lending_loop_collateral_profile.sql",
+      "dune_query_id": null,
+      "type": "nested",
+      "architecture": "v2",
+      "smoke_test": null,
+      "dependencies": [
+        "lending_flow_stitching",
+        "lending_collateral_ledger"
+      ],
+      "description": "Joins cross-protocol flows with collateral positions to segment loop activity by backing asset (BTC vs ETH vs LST)"
     }
   ]
 }
