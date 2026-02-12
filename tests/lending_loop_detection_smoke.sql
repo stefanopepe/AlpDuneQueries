@@ -4,8 +4,10 @@
 --              by looking for entities with borrow+supply on
 --              different protocols in the same transaction.
 --              Uses stablecoin events from the last 30 days.
+--              Covers Aave V3, Morpho Blue, Compound V3, Compound V2.
 -- Author: stefanopepe
 -- Created: 2026-02-11
+-- Updated: 2026-02-11
 -- ============================================================
 
 WITH stablecoins AS (
@@ -16,6 +18,15 @@ WITH stablecoins AS (
             (0x6b175474e89094c44da98b954eedeac495271d0f),  -- DAI
             (0x853d955acef822db058eb8505911ed77f175b99e)   -- FRAX
     ) AS t(address)
+),
+
+-- Resolve Morpho Blue stablecoin market IDs
+morpho_blue_stablecoin_markets AS (
+    SELECT id AS market_id
+    FROM morpho_blue_ethereum.morphoblue_evt_createmarket
+    WHERE CAST(json_extract_scalar(marketParams, '$.loanToken') AS VARBINARY) IN (
+        SELECT address FROM stablecoins
+    )
 ),
 
 -- Entities active on multiple protocols (stablecoin events only)
@@ -32,6 +43,28 @@ multi_protocol_entities AS (
         FROM aave_v3_ethereum.pool_evt_supply
         WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
           AND reserve IN (SELECT address FROM stablecoins)
+        -- Morpho Blue
+        UNION ALL
+        SELECT COALESCE(onBehalf, caller), 'morpho_blue'
+        FROM morpho_blue_ethereum.morphoblue_evt_borrow
+        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+          AND id IN (SELECT market_id FROM morpho_blue_stablecoin_markets)
+        UNION ALL
+        SELECT COALESCE(onBehalf, caller), 'morpho_blue'
+        FROM morpho_blue_ethereum.morphoblue_evt_supply
+        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+          AND id IN (SELECT market_id FROM morpho_blue_stablecoin_markets)
+        -- Compound V3
+        UNION ALL
+        SELECT src, 'compound_v3'
+        FROM compound_v3_ethereum.comet_evt_withdraw
+        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+          AND contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+        UNION ALL
+        SELECT dst, 'compound_v3'
+        FROM compound_v3_ethereum.comet_evt_supply
+        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+          AND contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
         -- Compound V2
         UNION ALL
         SELECT borrower, 'compound_v2'
@@ -50,27 +83,6 @@ multi_protocol_entities AS (
               0x39aa39c021dfbae8fac545936693ac917d5e7563,
               0xf650c3d88d12db855b8bf7d11be6c55a4e07dcc9,
               0x5d3a536e4d6dbd6114cc1ead35777bab948e3643
-          )
-        -- Morpho
-        UNION ALL
-        SELECT _borrower, 'morpho_aave_v2'
-        FROM morpho_aave_v2_ethereum.morpho_evt_borrowed
-        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
-          AND _poolToken IN (
-              0xbcca60bb61934080951369a648fb03df4f96263c,
-              0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-              0x028171bca77440897b824ca71d1c56cac55b68a3,
-              0xd4937682df3c8aef4fe912a96a74121c0829e664
-          )
-        UNION ALL
-        SELECT COALESCE(_onBehalf, _from), 'morpho_aave_v2'
-        FROM morpho_aave_v2_ethereum.morpho_evt_supplied
-        WHERE evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
-          AND _poolToken IN (
-              0xbcca60bb61934080951369a648fb03df4f96263c,
-              0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-              0x028171bca77440897b824ca71d1c56cac55b68a3,
-              0xd4937682df3c8aef4fe912a96a74121c0829e664
           )
     )
     GROUP BY entity_address

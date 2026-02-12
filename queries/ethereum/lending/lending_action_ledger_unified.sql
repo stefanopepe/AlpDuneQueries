@@ -1,7 +1,8 @@
 -- ============================================================
 -- Query: Lending Action Ledger - Unified Multi-Protocol (Base Query)
--- Description: Unified action ledger combining Morpho, Aave V3, and Compound V2
---              lending events into a single normalized schema.
+-- Description: Unified action ledger combining Aave V3, Morpho Blue,
+--              Compound V3, and Compound V2 lending events into a
+--              single normalized schema.
 --              Scoped to stablecoins (USDC, USDT, DAI, FRAX).
 --              This is the primary base query for cross-protocol loop analysis.
 --              Uses incremental processing with 1-day lookback.
@@ -12,9 +13,10 @@
 -- Dependencies: None (base query)
 -- ============================================================
 -- Protocols Included:
---   - morpho_aave_v2: Morpho optimizer on Aave V2
---   - aave_v3: Aave V3 direct lending
---   - compound_v2: Compound V2 direct lending
+--   - aave_v3: Aave V3 direct lending (143k borrows/90d)
+--   - morpho_blue: Morpho Blue isolated markets (30k borrows/90d)
+--   - compound_v3: Compound V3 Comet USDC (9k borrows/90d)
+--   - compound_v2: Compound V2 legacy (low activity, kept for coverage)
 -- ============================================================
 -- Asset Scope: Stablecoins only
 --   - USDC  0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
@@ -76,7 +78,6 @@ checkpoint AS (
 -- STABLECOIN AND WRAPPER TOKEN MAPPINGS
 -- ============================================================
 
--- Stablecoin underlying addresses
 stablecoins AS (
     SELECT address
     FROM (
@@ -88,7 +89,7 @@ stablecoins AS (
     ) AS t(address)
 ),
 
--- Map cTokens (Compound V2) and aTokens (Morpho/Aave V2) to underlying
+-- Map wrapper tokens to underlying (Compound V2 cTokens, Compound V3 Comet)
 wrapper_to_underlying AS (
     SELECT wrapper, underlying
     FROM (
@@ -97,145 +98,127 @@ wrapper_to_underlying AS (
             (0x39aa39c021dfbae8fac545936693ac917d5e7563, 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48),  -- cUSDC  -> USDC
             (0xf650c3d88d12db855b8bf7d11be6c55a4e07dcc9, 0xdac17f958d2ee523a2206206994597c13d831ec7),  -- cUSDT  -> USDT
             (0x5d3a536e4d6dbd6114cc1ead35777bab948e3643, 0x6b175474e89094c44da98b954eedeac495271d0f),  -- cDAI   -> DAI
-            -- Aave V2 aTokens (used by Morpho)
-            (0xbcca60bb61934080951369a648fb03df4f96263c, 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48),  -- aUSDC  -> USDC
-            (0x3ed3b47dd13ec9a98b44e6204a523e766b225811, 0xdac17f958d2ee523a2206206994597c13d831ec7),  -- aUSDT  -> USDT
-            (0x028171bca77440897b824ca71d1c56cac55b68a3, 0x6b175474e89094c44da98b954eedeac495271d0f),  -- aDAI   -> DAI
-            (0xd4937682df3c8aef4fe912a96a74121c0829e664, 0x853d955acef822db058eb8505911ed77f175b99e)   -- aFRAX  -> FRAX
+            -- Compound V3 Comet contracts
+            (0xc3d688b66703497daa19211eedff47f25384cdc3, 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48)   -- cUSDCv3 -> USDC
     ) AS t(wrapper, underlying)
 ),
 
 -- ============================================================
--- MORPHO AAVE V2 EVENTS
--- Morpho uses aToken addresses (_poolToken) and _amount column
+-- MORPHO BLUE EVENTS
+-- Morpho Blue uses market IDs. We filter to stablecoin loan markets
+-- by joining createmarket events where loanToken is a stablecoin.
+-- The `assets` column contains the amount in loan token decimals.
 -- ============================================================
 
-morpho_supply AS (
+-- Resolve Morpho Blue market IDs to stablecoin loan tokens
+morpho_blue_stablecoin_markets AS (
+    SELECT
+        id AS market_id,
+        CAST(json_extract_scalar(marketParams, '$.loanToken') AS VARBINARY) AS loan_token
+    FROM morpho_blue_ethereum.morphoblue_evt_createmarket
+    WHERE CAST(json_extract_scalar(marketParams, '$.loanToken') AS VARBINARY) IN (
+        SELECT address FROM stablecoins
+    )
+),
+
+morpho_blue_supply AS (
     SELECT
         s.evt_block_time AS block_time,
         CAST(date_trunc('day', s.evt_block_time) AS DATE) AS block_date,
         s.evt_block_number AS block_number,
         s.evt_tx_hash AS tx_hash,
         s.evt_index,
-        'morpho_aave_v2' AS protocol,
+        'morpho_blue' AS protocol,
         'supply' AS action_type,
-        s._from AS user_address,
-        s._onBehalf AS on_behalf_of,
-        s._poolToken AS raw_asset_address,
-        s._amount AS amount_raw
-    FROM morpho_aave_v2_ethereum.morpho_evt_supplied s
+        s.caller AS user_address,
+        s.onBehalf AS on_behalf_of,
+        m.loan_token AS raw_asset_address,
+        CAST(s.assets AS UINT256) AS amount_raw
+    FROM morpho_blue_ethereum.morphoblue_evt_supply s
+    INNER JOIN morpho_blue_stablecoin_markets m ON m.market_id = s.id
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', s.evt_block_time) AS DATE) >= c.cutoff_date
       AND CAST(date_trunc('day', s.evt_block_time) AS DATE) < CURRENT_DATE
-      -- Filter to stablecoin aTokens only
-      AND s._poolToken IN (
-          0xbcca60bb61934080951369a648fb03df4f96263c,  -- aUSDC
-          0x3ed3b47dd13ec9a98b44e6204a523e766b225811,  -- aUSDT
-          0x028171bca77440897b824ca71d1c56cac55b68a3,  -- aDAI
-          0xd4937682df3c8aef4fe912a96a74121c0829e664   -- aFRAX
-      )
 ),
 
-morpho_borrow AS (
+morpho_blue_borrow AS (
     SELECT
         b.evt_block_time AS block_time,
         CAST(date_trunc('day', b.evt_block_time) AS DATE) AS block_date,
         b.evt_block_number AS block_number,
         b.evt_tx_hash AS tx_hash,
         b.evt_index,
-        'morpho_aave_v2' AS protocol,
+        'morpho_blue' AS protocol,
         'borrow' AS action_type,
-        b._borrower AS user_address,
-        b._borrower AS on_behalf_of,
-        b._poolToken AS raw_asset_address,
-        b._amount AS amount_raw
-    FROM morpho_aave_v2_ethereum.morpho_evt_borrowed b
+        b.caller AS user_address,
+        b.onBehalf AS on_behalf_of,
+        m.loan_token AS raw_asset_address,
+        CAST(b.assets AS UINT256) AS amount_raw
+    FROM morpho_blue_ethereum.morphoblue_evt_borrow b
+    INNER JOIN morpho_blue_stablecoin_markets m ON m.market_id = b.id
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', b.evt_block_time) AS DATE) >= c.cutoff_date
       AND CAST(date_trunc('day', b.evt_block_time) AS DATE) < CURRENT_DATE
-      AND b._poolToken IN (
-          0xbcca60bb61934080951369a648fb03df4f96263c,
-          0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-          0x028171bca77440897b824ca71d1c56cac55b68a3,
-          0xd4937682df3c8aef4fe912a96a74121c0829e664
-      )
 ),
 
-morpho_repay AS (
+morpho_blue_repay AS (
     SELECT
         r.evt_block_time AS block_time,
         CAST(date_trunc('day', r.evt_block_time) AS DATE) AS block_date,
         r.evt_block_number AS block_number,
         r.evt_tx_hash AS tx_hash,
         r.evt_index,
-        'morpho_aave_v2' AS protocol,
+        'morpho_blue' AS protocol,
         'repay' AS action_type,
-        r._repayer AS user_address,
-        r._onBehalf AS on_behalf_of,
-        r._poolToken AS raw_asset_address,
-        r._amount AS amount_raw
-    FROM morpho_aave_v2_ethereum.morpho_evt_repaid r
+        r.caller AS user_address,
+        r.onBehalf AS on_behalf_of,
+        m.loan_token AS raw_asset_address,
+        CAST(r.assets AS UINT256) AS amount_raw
+    FROM morpho_blue_ethereum.morphoblue_evt_repay r
+    INNER JOIN morpho_blue_stablecoin_markets m ON m.market_id = r.id
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', r.evt_block_time) AS DATE) >= c.cutoff_date
       AND CAST(date_trunc('day', r.evt_block_time) AS DATE) < CURRENT_DATE
-      AND r._poolToken IN (
-          0xbcca60bb61934080951369a648fb03df4f96263c,
-          0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-          0x028171bca77440897b824ca71d1c56cac55b68a3,
-          0xd4937682df3c8aef4fe912a96a74121c0829e664
-      )
 ),
 
-morpho_withdraw AS (
+morpho_blue_withdraw AS (
     SELECT
         w.evt_block_time AS block_time,
         CAST(date_trunc('day', w.evt_block_time) AS DATE) AS block_date,
         w.evt_block_number AS block_number,
         w.evt_tx_hash AS tx_hash,
         w.evt_index,
-        'morpho_aave_v2' AS protocol,
+        'morpho_blue' AS protocol,
         'withdraw' AS action_type,
-        w._supplier AS user_address,
-        w._receiver AS on_behalf_of,
-        w._poolToken AS raw_asset_address,
-        w._amount AS amount_raw
-    FROM morpho_aave_v2_ethereum.morpho_evt_withdrawn w
+        w.caller AS user_address,
+        w.onBehalf AS on_behalf_of,
+        m.loan_token AS raw_asset_address,
+        CAST(w.assets AS UINT256) AS amount_raw
+    FROM morpho_blue_ethereum.morphoblue_evt_withdraw w
+    INNER JOIN morpho_blue_stablecoin_markets m ON m.market_id = w.id
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', w.evt_block_time) AS DATE) >= c.cutoff_date
       AND CAST(date_trunc('day', w.evt_block_time) AS DATE) < CURRENT_DATE
-      AND w._poolToken IN (
-          0xbcca60bb61934080951369a648fb03df4f96263c,
-          0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-          0x028171bca77440897b824ca71d1c56cac55b68a3,
-          0xd4937682df3c8aef4fe912a96a74121c0829e664
-      )
 ),
 
--- Morpho liquidations: emit two rows (debt repaid + collateral seized)
--- Only include when the debt asset is a stablecoin
-morpho_liquidation AS (
+morpho_blue_liquidation AS (
     SELECT
         l.evt_block_time AS block_time,
         CAST(date_trunc('day', l.evt_block_time) AS DATE) AS block_date,
         l.evt_block_number AS block_number,
         l.evt_tx_hash AS tx_hash,
         l.evt_index,
-        'morpho_aave_v2' AS protocol,
+        'morpho_blue' AS protocol,
         'liquidation' AS action_type,
-        l._liquidator AS user_address,
-        l._liquidated AS on_behalf_of,
-        l._poolTokenBorrowed AS raw_asset_address,
-        l._amountRepaid AS amount_raw
-    FROM morpho_aave_v2_ethereum.morpho_evt_liquidated l
+        l.caller AS user_address,
+        l.borrower AS on_behalf_of,
+        m.loan_token AS raw_asset_address,
+        CAST(l.repaidAssets AS UINT256) AS amount_raw
+    FROM morpho_blue_ethereum.morphoblue_evt_liquidate l
+    INNER JOIN morpho_blue_stablecoin_markets m ON m.market_id = l.id
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', l.evt_block_time) AS DATE) >= c.cutoff_date
       AND CAST(date_trunc('day', l.evt_block_time) AS DATE) < CURRENT_DATE
-      AND l._poolTokenBorrowed IN (
-          0xbcca60bb61934080951369a648fb03df4f96263c,
-          0x3ed3b47dd13ec9a98b44e6204a523e766b225811,
-          0x028171bca77440897b824ca71d1c56cac55b68a3,
-          0xd4937682df3c8aef4fe912a96a74121c0829e664
-      )
 ),
 
 -- ============================================================
@@ -323,7 +306,6 @@ aave_v3_withdraw AS (
       AND w.reserve IN (SELECT address FROM stablecoins)
 ),
 
--- Aave V3 liquidations: track debt repaid (stablecoin side)
 aave_v3_liquidation AS (
     SELECT
         l.evt_block_time AS block_time,
@@ -345,11 +327,81 @@ aave_v3_liquidation AS (
 ),
 
 -- ============================================================
--- COMPOUND V2 EVENTS
--- Compound uses contract_address (cToken) and per-event amount columns
+-- COMPOUND V3 (COMET) EVENTS
+-- Compound V3 has one Comet contract per base asset.
+-- USDC Comet: 0xc3d688b66703497daa19211eedff47f25384cdc3
+-- Supply event = lending base asset; Withdraw event = borrowing base asset.
+-- No separate borrow/repay events — they use supply/withdraw.
 -- ============================================================
 
-compound_supply AS (
+compound_v3_supply AS (
+    SELECT
+        s.evt_block_time AS block_time,
+        CAST(date_trunc('day', s.evt_block_time) AS DATE) AS block_date,
+        s.evt_block_number AS block_number,
+        s.evt_tx_hash AS tx_hash,
+        s.evt_index,
+        'compound_v3' AS protocol,
+        'supply' AS action_type,
+        s."from" AS user_address,
+        s.dst AS on_behalf_of,
+        s.contract_address AS raw_asset_address,
+        s.amount AS amount_raw
+    FROM compound_v3_ethereum.comet_evt_supply s
+    CROSS JOIN checkpoint c
+    WHERE CAST(date_trunc('day', s.evt_block_time) AS DATE) >= c.cutoff_date
+      AND CAST(date_trunc('day', s.evt_block_time) AS DATE) < CURRENT_DATE
+      -- USDC Comet only
+      AND s.contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+),
+
+compound_v3_borrow AS (
+    SELECT
+        w.evt_block_time AS block_time,
+        CAST(date_trunc('day', w.evt_block_time) AS DATE) AS block_date,
+        w.evt_block_number AS block_number,
+        w.evt_tx_hash AS tx_hash,
+        w.evt_index,
+        'compound_v3' AS protocol,
+        'borrow' AS action_type,
+        w.src AS user_address,
+        w.src AS on_behalf_of,
+        w.contract_address AS raw_asset_address,
+        w.amount AS amount_raw
+    FROM compound_v3_ethereum.comet_evt_withdraw w
+    CROSS JOIN checkpoint c
+    WHERE CAST(date_trunc('day', w.evt_block_time) AS DATE) >= c.cutoff_date
+      AND CAST(date_trunc('day', w.evt_block_time) AS DATE) < CURRENT_DATE
+      AND w.contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+),
+
+compound_v3_liquidation AS (
+    SELECT
+        l.evt_block_time AS block_time,
+        CAST(date_trunc('day', l.evt_block_time) AS DATE) AS block_date,
+        l.evt_block_number AS block_number,
+        l.evt_tx_hash AS tx_hash,
+        l.evt_index,
+        'compound_v3' AS protocol,
+        'liquidation' AS action_type,
+        l.absorber AS user_address,
+        l.borrower AS on_behalf_of,
+        -- AbsorbDebt is denominated in base asset (USDC)
+        0xc3d688b66703497daa19211eedff47f25384cdc3 AS raw_asset_address,
+        CAST(l.basePaidOut AS UINT256) AS amount_raw
+    FROM compound_v3_ethereum.comet_evt_absorbdebt l
+    CROSS JOIN checkpoint c
+    WHERE CAST(date_trunc('day', l.evt_block_time) AS DATE) >= c.cutoff_date
+      AND CAST(date_trunc('day', l.evt_block_time) AS DATE) < CURRENT_DATE
+      AND l.contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+),
+
+-- ============================================================
+-- COMPOUND V2 EVENTS (legacy, low activity but kept for coverage)
+-- Uses cTokens (wrapper addresses) and per-event amount columns
+-- ============================================================
+
+compound_v2_supply AS (
     SELECT
         m.evt_block_time AS block_time,
         CAST(date_trunc('day', m.evt_block_time) AS DATE) AS block_date,
@@ -373,7 +425,7 @@ compound_supply AS (
       )
 ),
 
-compound_borrow AS (
+compound_v2_borrow AS (
     SELECT
         b.evt_block_time AS block_time,
         CAST(date_trunc('day', b.evt_block_time) AS DATE) AS block_date,
@@ -397,7 +449,7 @@ compound_borrow AS (
       )
 ),
 
-compound_repay AS (
+compound_v2_repay AS (
     SELECT
         r.evt_block_time AS block_time,
         CAST(date_trunc('day', r.evt_block_time) AS DATE) AS block_date,
@@ -421,7 +473,7 @@ compound_repay AS (
       )
 ),
 
-compound_withdraw AS (
+compound_v2_withdraw AS (
     SELECT
         r.evt_block_time AS block_time,
         CAST(date_trunc('day', r.evt_block_time) AS DATE) AS block_date,
@@ -445,8 +497,7 @@ compound_withdraw AS (
       )
 ),
 
--- Compound V2 liquidations: track debt repaid (stablecoin side)
-compound_liquidation AS (
+compound_v2_liquidation AS (
     SELECT
         l.evt_block_time AS block_time,
         CAST(date_trunc('day', l.evt_block_time) AS DATE) AS block_date,
@@ -475,24 +526,28 @@ compound_liquidation AS (
 -- ============================================================
 
 all_events AS (
-    -- Morpho
-    SELECT * FROM morpho_supply
-    UNION ALL SELECT * FROM morpho_borrow
-    UNION ALL SELECT * FROM morpho_repay
-    UNION ALL SELECT * FROM morpho_withdraw
-    UNION ALL SELECT * FROM morpho_liquidation
+    -- Morpho Blue
+    SELECT * FROM morpho_blue_supply
+    UNION ALL SELECT * FROM morpho_blue_borrow
+    UNION ALL SELECT * FROM morpho_blue_repay
+    UNION ALL SELECT * FROM morpho_blue_withdraw
+    UNION ALL SELECT * FROM morpho_blue_liquidation
     -- Aave V3
     UNION ALL SELECT * FROM aave_v3_supply
     UNION ALL SELECT * FROM aave_v3_borrow
     UNION ALL SELECT * FROM aave_v3_repay
     UNION ALL SELECT * FROM aave_v3_withdraw
     UNION ALL SELECT * FROM aave_v3_liquidation
+    -- Compound V3
+    UNION ALL SELECT * FROM compound_v3_supply
+    UNION ALL SELECT * FROM compound_v3_borrow
+    UNION ALL SELECT * FROM compound_v3_liquidation
     -- Compound V2
-    UNION ALL SELECT * FROM compound_supply
-    UNION ALL SELECT * FROM compound_borrow
-    UNION ALL SELECT * FROM compound_repay
-    UNION ALL SELECT * FROM compound_withdraw
-    UNION ALL SELECT * FROM compound_liquidation
+    UNION ALL SELECT * FROM compound_v2_supply
+    UNION ALL SELECT * FROM compound_v2_borrow
+    UNION ALL SELECT * FROM compound_v2_repay
+    UNION ALL SELECT * FROM compound_v2_withdraw
+    UNION ALL SELECT * FROM compound_v2_liquidation
 ),
 
 -- ============================================================
@@ -511,21 +566,18 @@ enriched AS (
         e.user_address,
         e.on_behalf_of,
         COALESCE(e.on_behalf_of, e.user_address) AS entity_address,
-        -- Resolve wrapper tokens (cToken/aToken) to underlying
+        -- Resolve wrapper tokens (cToken/Comet) to underlying
         COALESCE(w.underlying, e.raw_asset_address) AS asset_address,
         t.symbol AS asset_symbol,
         e.amount_raw,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, t.decimals) AS amount,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, t.decimals) * p.price AS amount_usd
     FROM all_events e
-    -- Map wrapper tokens to underlying
     LEFT JOIN wrapper_to_underlying w
         ON w.wrapper = e.raw_asset_address
-    -- Token metadata on the resolved underlying
     LEFT JOIN tokens.erc20 t
         ON t.contract_address = COALESCE(w.underlying, e.raw_asset_address)
         AND t.blockchain = 'ethereum'
-    -- USD price on the resolved underlying
     LEFT JOIN prices.usd p
         ON p.contract_address = COALESCE(w.underlying, e.raw_asset_address)
         AND p.blockchain = 'ethereum'

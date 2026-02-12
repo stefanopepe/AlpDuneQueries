@@ -1,10 +1,12 @@
 -- ============================================================
 -- Smoke Test: Lending Flow Stitching
 -- Description: Validates cross-protocol flow detection by checking
---              for same-tx borrow→supply patterns across protocols.
+--              for same-tx borrow->supply patterns across protocols.
 --              Uses stablecoin-filtered events from the last 30 days.
+--              Covers Aave V3, Morpho Blue, Compound V3, Compound V2.
 -- Author: stefanopepe
 -- Created: 2026-02-11
+-- Updated: 2026-02-11
 -- ============================================================
 
 WITH stablecoins AS (
@@ -15,6 +17,15 @@ WITH stablecoins AS (
             (0x6b175474e89094c44da98b954eedeac495271d0f),  -- DAI
             (0x853d955acef822db058eb8505911ed77f175b99e)   -- FRAX
     ) AS t(address)
+),
+
+-- Resolve Morpho Blue stablecoin market IDs
+morpho_blue_stablecoin_markets AS (
+    SELECT id AS market_id
+    FROM morpho_blue_ethereum.morphoblue_evt_createmarket
+    WHERE CAST(json_extract_scalar(marketParams, '$.loanToken') AS VARBINARY) IN (
+        SELECT address FROM stablecoins
+    )
 ),
 
 -- Aave V3 borrows (stablecoins, last 30 days)
@@ -45,8 +56,64 @@ aave_supplies AS (
       AND s.reserve IN (SELECT address FROM stablecoins)
 ),
 
+-- Morpho Blue borrows (stablecoin markets, last 30 days)
+morpho_borrows AS (
+    SELECT
+        b.evt_block_time AS block_time,
+        b.evt_tx_hash AS tx_hash,
+        b.evt_index,
+        'morpho_blue' AS protocol,
+        COALESCE(b.onBehalf, b.caller) AS entity_address,
+        0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 AS asset_address  -- simplified
+    FROM morpho_blue_ethereum.morphoblue_evt_borrow b
+    WHERE b.evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+      AND b.id IN (SELECT market_id FROM morpho_blue_stablecoin_markets)
+),
+
+-- Morpho Blue supplies (stablecoin markets, last 30 days)
+morpho_supplies AS (
+    SELECT
+        s.evt_block_time AS block_time,
+        s.evt_tx_hash AS tx_hash,
+        s.evt_index,
+        'morpho_blue' AS protocol,
+        COALESCE(s.onBehalf, s.caller) AS entity_address,
+        0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 AS asset_address  -- simplified
+    FROM morpho_blue_ethereum.morphoblue_evt_supply s
+    WHERE s.evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+      AND s.id IN (SELECT market_id FROM morpho_blue_stablecoin_markets)
+),
+
+-- Compound V3 borrows (Withdraw on USDC Comet, last 30 days)
+compound_v3_borrows AS (
+    SELECT
+        w.evt_block_time AS block_time,
+        w.evt_tx_hash AS tx_hash,
+        w.evt_index,
+        'compound_v3' AS protocol,
+        w.src AS entity_address,
+        w.contract_address AS asset_address
+    FROM compound_v3_ethereum.comet_evt_withdraw w
+    WHERE w.evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+      AND w.contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+),
+
+-- Compound V3 supplies (Supply on USDC Comet, last 30 days)
+compound_v3_supplies AS (
+    SELECT
+        s.evt_block_time AS block_time,
+        s.evt_tx_hash AS tx_hash,
+        s.evt_index,
+        'compound_v3' AS protocol,
+        s.dst AS entity_address,
+        s.contract_address AS asset_address
+    FROM compound_v3_ethereum.comet_evt_supply s
+    WHERE s.evt_block_time >= CURRENT_DATE - INTERVAL '30' DAY
+      AND s.contract_address = 0xc3d688b66703497daa19211eedff47f25384cdc3
+),
+
 -- Compound V2 borrows (stablecoin cTokens, last 30 days)
-compound_borrows AS (
+compound_v2_borrows AS (
     SELECT
         b.evt_block_time AS block_time,
         b.evt_tx_hash AS tx_hash,
@@ -64,7 +131,7 @@ compound_borrows AS (
 ),
 
 -- Compound V2 supplies (stablecoin cTokens, last 30 days)
-compound_supplies AS (
+compound_v2_supplies AS (
     SELECT
         m.evt_block_time AS block_time,
         m.evt_tx_hash AS tx_hash,
@@ -81,14 +148,18 @@ compound_supplies AS (
       )
 ),
 
--- Union borrows and supplies
+-- Union borrows and supplies across all 4 protocols
 all_borrows AS (
     SELECT * FROM aave_borrows
-    UNION ALL SELECT * FROM compound_borrows
+    UNION ALL SELECT * FROM morpho_borrows
+    UNION ALL SELECT * FROM compound_v3_borrows
+    UNION ALL SELECT * FROM compound_v2_borrows
 ),
 all_supplies AS (
     SELECT * FROM aave_supplies
-    UNION ALL SELECT * FROM compound_supplies
+    UNION ALL SELECT * FROM morpho_supplies
+    UNION ALL SELECT * FROM compound_v3_supplies
+    UNION ALL SELECT * FROM compound_v2_supplies
 ),
 
 -- Same-tx cross-protocol stitching test
