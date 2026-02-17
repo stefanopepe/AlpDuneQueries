@@ -60,7 +60,7 @@ prev AS (
             entity_address VARBINARY,
             asset_address VARBINARY,
             asset_symbol VARCHAR,
-            amount_raw UINT256,
+            amount_raw VARCHAR,
             amount DOUBLE,
             amount_usd DOUBLE
         )
@@ -574,7 +574,7 @@ enriched AS (
         -- Resolve wrapper tokens (cToken/Comet) to underlying
         COALESCE(w.underlying, e.raw_asset_address) AS asset_address,
         sm.symbol AS asset_symbol,
-        e.amount_raw,
+        CAST(e.amount_raw AS VARCHAR) AS amount_raw,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, sm.decimals) AS amount,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, sm.decimals) * p.price AS amount_usd
     FROM all_events e

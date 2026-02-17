@@ -45,7 +45,7 @@ prev AS (
             user_address VARBINARY,
             on_behalf_of VARBINARY,
             asset_address VARBINARY,
-            amount_raw UINT256,
+            amount_raw VARCHAR,
             amount DOUBLE,
             amount_usd DOUBLE,
             interest_rate_mode BIGINT,
@@ -203,7 +203,7 @@ enriched AS (
         e.user_address,
         e.on_behalf_of,
         e.asset_address,
-        e.amount_raw,
+        CAST(e.amount_raw AS VARCHAR) AS amount_raw,
         -- Decimal adjustment using token metadata
         CASE
             WHEN t.decimals IS NOT NULL THEN

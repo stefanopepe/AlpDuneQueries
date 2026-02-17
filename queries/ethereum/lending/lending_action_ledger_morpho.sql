@@ -46,11 +46,11 @@ prev AS (
             on_behalf_of VARBINARY,
             asset_address VARBINARY,
             pool_token VARBINARY,
-            amount_raw UINT256,
+            amount_raw VARCHAR,
             amount DOUBLE,
             amount_usd DOUBLE,
-            balance_p2p UINT256,
-            balance_pool UINT256
+            balance_p2p VARCHAR,
+            balance_pool VARCHAR
         )
     ))
 ),
@@ -169,8 +169,8 @@ liquidation_events AS (
         CAST(NULL AS VARBINARY) AS asset_address,
         l._poolTokenBorrowed AS pool_token,  -- Debt asset
         l._amountRepaid AS amount_raw,
-        CAST(0 AS UINT256) AS balance_p2p,
-        CAST(0 AS UINT256) AS balance_pool
+        CAST('0' AS VARCHAR) AS balance_p2p,
+        CAST('0' AS VARCHAR) AS balance_pool
     FROM morpho_aave_v2_ethereum.morpho_evt_liquidated l
     CROSS JOIN checkpoint c
     WHERE CAST(date_trunc('day', l.evt_block_time) AS DATE) >= c.cutoff_date
@@ -207,14 +207,14 @@ enriched AS (
         e.on_behalf_of,
         e.asset_address,
         e.pool_token,
-        e.amount_raw,
+        CAST(e.amount_raw AS VARCHAR) AS amount_raw,
         -- For now, assume 18 decimals (most common)
         -- In production, join to token metadata
         CAST(e.amount_raw AS DOUBLE) / 1e18 AS amount,
         -- USD value placeholder (would join to prices.usd in production)
         CAST(NULL AS DOUBLE) AS amount_usd,
-        e.balance_p2p,
-        e.balance_pool
+        CAST(e.balance_p2p AS VARCHAR) AS balance_p2p,
+        CAST(e.balance_pool AS VARCHAR) AS balance_pool
     FROM all_events e
 ),
 

@@ -64,7 +64,7 @@ prev AS (
             collateral_address VARBINARY,
             collateral_symbol VARCHAR,
             collateral_category VARCHAR,
-            amount_raw UINT256,
+            amount_raw VARCHAR,
             amount DOUBLE,
             amount_usd DOUBLE
         )
@@ -357,7 +357,7 @@ enriched AS (
         COALESCE(cw.underlying, e.raw_asset_address) AS collateral_address,
         cm.symbol AS collateral_symbol,
         cm.category AS collateral_category,
-        e.amount_raw,
+        CAST(e.amount_raw AS VARCHAR) AS amount_raw,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, cm.decimals) AS amount,
         CAST(e.amount_raw AS DOUBLE) / POWER(10, cm.decimals) * p.price AS amount_usd
     FROM all_events e
