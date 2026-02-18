@@ -183,7 +183,8 @@ python -m scripts.smoke_runner --all --architecture v2
 
 **Query Registry:**
 
-The file `queries/registry.json` maintains metadata mapping local SQL files to Dune query IDs:
+The files `queries/registry.bitcoin.json`, `queries/registry.ethereum.json`, and
+`queries/registry.base.json` maintain metadata mapping local SQL files to Dune query IDs:
 
 ```bash
 # List registered queries

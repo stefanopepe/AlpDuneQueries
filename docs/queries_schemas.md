@@ -20,6 +20,7 @@ This document provides an overview of all SQL queries in the `/queries/` directo
   - [bitcoin_utxo_heuristics_v2.sql](#bitcoin_utxo_heuristics_v2sql)
   - [bitcoin_privacy_heuristics_v3.sql](#bitcoin_privacy_heuristics_v3sql)
 - [Ethereum / Lending Query Architecture](#ethereum--lending-query-architecture)
+- [Base / Lending Query Architecture](#base--lending-query-architecture)
   - [lending_action_ledger_unified.sql](#lending_action_ledger_unifiedsql) (Base, materialized)
   - [lending_action_ledger_aave_v3.sql](#lending_action_ledger_aave_v3sql) (Base)
   - [lending_action_ledger_morpho.sql](#lending_action_ledger_morphosql) (Base)
@@ -48,6 +49,8 @@ queries/
 ├── bitcoin/           # Bitcoin network queries (11 queries)
 ├── ethereum/
 │   └── lending/       # Ethereum lending protocol queries (11 queries)
+├── base/
+│   └── lending/       # Base lending protocol queries (11 queries)
 ├── polygon/           # Polygon queries (planned)
 ├── arbitrum/          # Arbitrum queries (planned)
 └── cross-chain/       # Multi-chain queries (planned)
@@ -90,6 +93,22 @@ queries/
 | [lending_sankey_flows.sql](#lending_sankey_flowssql) | Nested | TBD | Sankey diagram edge list |
 | [lending_entity_loop_storyboard.sql](#lending_entity_loop_storyboardsql) | Nested | TBD | Per-entity time-ordered action traces |
 | [lending_loop_collateral_profile.sql](#lending_loop_collateral_profilesql) | Nested | TBD | Loop activity segmented by collateral type |
+
+### Base / Lending Queries
+
+| Query | Type | Dune Query ID | Description |
+|-------|------|---------------|-------------|
+| `queries/base/lending/lending_action_ledger_unified.sql` | Base | TBD | Unified stablecoin action ledger on Base |
+| `queries/base/lending/lending_action_ledger_aave_v3.sql` | Base | TBD | Aave V3 lending events on Base |
+| `queries/base/lending/lending_action_ledger_morpho.sql` | Base | TBD | Morpho Blue lending events on Base |
+| `queries/base/lending/lending_flow_stitching.sql` | Base | TBD | Cross-protocol flow detection on Base |
+| `queries/base/lending/lending_collateral_ledger.sql` | Base | TBD | Collateral event ledger on Base (cbBTC/WBTC/WETH/eth_lst) |
+| `queries/base/lending/lending_loop_detection.sql` | Nested | TBD | Multi-hop lending loop detection on Base |
+| `queries/base/lending/lending_loop_metrics_daily.sql` | Nested | TBD | Daily loop aggregates on Base |
+| `queries/base/lending/lending_entity_balance_sheet.sql` | Nested | TBD | Per-entity running collateral/debt on Base |
+| `queries/base/lending/lending_sankey_flows.sql` | Nested | TBD | Sankey edge list on Base |
+| `queries/base/lending/lending_entity_loop_storyboard.sql` | Nested | TBD | Per-entity action traces on Base |
+| `queries/base/lending/lending_loop_collateral_profile.sql` | Nested | TBD | Loop collateral attribution on Base |
 
 ### Legacy Queries (Deprecated)
 
@@ -1303,6 +1322,29 @@ Time-ordered per-entity action traces with running collateral/debt totals. Filte
 - Only includes entities with activity on 2+ protocols
 - Running totals are computed across all protocols (not per-protocol)
 - Ordered by entity_address, event_sequence for chronological replay
+
+---
+
+## Base / Lending Query Architecture
+
+The Base lending suite mirrors the Ethereum lending architecture with the same
+11-query framework and dependency structure, but uses Base-scoped protocol
+tables and asset constants.
+
+Key Base-specific defaults:
+
+- Stablecoin scope: USDC, USDbC, USDT, DAI
+- Collateral taxonomy: cbBTC + WBTC (`btc`), WETH (`eth`), `eth_lst` bucket
+- Protocol scope: Aave V3 + Morpho Blue (Compound intentionally deferred until
+  Base decoded coverage/mappings are validated)
+- Nested query references use placeholder IDs (for example
+  `query_<BASE_LENDING_FLOW_STITCHING_ID>`) until Dune IDs are assigned
+
+See:
+
+- `queries/base/lending/` for SQL implementations
+- `queries/registry.base.json` for metadata/dependencies
+- `tests/base_lending_*_smoke.sql` for smoke coverage
 
 ---
 

@@ -8,6 +8,7 @@ This folder contains reference documentation for the DuneQueries repository.
 |------|-------------|
 | [dune_database_schemas.md](./dune_database_schemas.md) | Comprehensive reference of Dune Analytics table schemas (Ethereum, Bitcoin, Spellbook, etc.) |
 | [queries_schemas.md](./queries_schemas.md) | Documentation of all queries in this repository with their input/output schemas |
+| [query_constants.md](./query_constants.md) | Ledger of hardcoded thresholds, intervals, address allowlists, and other fixed constants |
 
 ---
 
@@ -27,11 +28,20 @@ This folder contains reference documentation for the DuneQueries repository.
 queries/
 ├── bitcoin/           # Bitcoin network queries
 ├── ethereum/          # Ethereum mainnet queries
+├── base/              # Base chain queries
 ├── polygon/           # Polygon queries
 ├── arbitrum/          # Arbitrum queries
 ├── optimism/          # Optimism queries
 └── cross-chain/       # Multi-chain queries
 ```
+
+### Query Registries
+
+Query metadata is stored in chain-specific registry files:
+
+- `queries/registry.bitcoin.json`
+- `queries/registry.ethereum.json`
+- `queries/registry.base.json`
 
 ### Query File Naming
 

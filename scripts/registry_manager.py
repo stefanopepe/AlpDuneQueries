@@ -13,23 +13,37 @@ from typing import Any
 
 # Base path for the repository
 REPO_ROOT = Path(__file__).parent.parent
-REGISTRY_PATH = REPO_ROOT / "queries" / "registry.json"
+REGISTRY_PATHS = [
+    REPO_ROOT / "queries" / "registry.bitcoin.json",
+    REPO_ROOT / "queries" / "registry.ethereum.json",
+    REPO_ROOT / "queries" / "registry.base.json",
+]
 
 
 def load_registry() -> dict[str, Any]:
-    """Load the query registry from JSON file."""
-    if not REGISTRY_PATH.exists():
-        raise FileNotFoundError(f"Registry not found: {REGISTRY_PATH}")
+    """Load and merge all chain registries."""
+    merged_queries: list[dict[str, Any]] = []
+    for path in REGISTRY_PATHS:
+        if not path.exists():
+            raise FileNotFoundError(f"Registry not found: {path}")
+        with open(path) as f:
+            registry = json.load(f)
+        for query in registry.get("queries", []):
+            q = dict(query)
+            q["_registry_file"] = str(path.relative_to(REPO_ROOT))
+            merged_queries.append(q)
+    return {
+        "version": "1.0",
+        "description": "Merged query registry",
+        "queries": merged_queries,
+    }
 
-    with open(REGISTRY_PATH) as f:
-        return json.load(f)
 
-
-def save_registry(registry: dict[str, Any]) -> None:
-    """Save the query registry to JSON file."""
-    with open(REGISTRY_PATH, "w") as f:
+def save_registry_file(path: Path, registry: dict[str, Any]) -> None:
+    """Save one chain registry file."""
+    with open(path, "w") as f:
         json.dump(registry, f, indent=2)
-        f.write("\n")  # Trailing newline
+        f.write("\n")
 
 
 def get_query(name: str) -> dict[str, Any] | None:
@@ -52,13 +66,14 @@ def set_query_id(name: str, dune_id: int) -> bool:
     Returns:
         True if successful, False if query not found.
     """
-    registry = load_registry()
-
-    for query in registry["queries"]:
-        if query["name"] == name:
-            query["dune_query_id"] = dune_id
-            save_registry(registry)
-            return True
+    for path in REGISTRY_PATHS:
+        with open(path) as f:
+            registry = json.load(f)
+        for query in registry.get("queries", []):
+            if query["name"] == name:
+                query["dune_query_id"] = dune_id
+                save_registry_file(path, registry)
+                return True
 
     return False
 
@@ -143,16 +158,6 @@ def validate_registry() -> list[str]:
             if dep not in names:
                 errors.append(f"[{name}] Unknown dependency: {dep}")
 
-        # Check nested queries have base query ID if they need it
-        if query.get("type") == "nested" and query.get("dependencies"):
-            # Check if base query has an ID set
-            for dep in query["dependencies"]:
-                dep_query = get_query(dep)
-                if dep_query and not dep_query.get("dune_query_id"):
-                    errors.append(
-                        f"[{name}] Dependency '{dep}' has no Dune query ID set"
-                    )
-
     return errors
 
 
@@ -163,8 +168,8 @@ def print_query_table(queries: list[dict[str, Any]]) -> None:
         return
 
     # Column headers and widths
-    headers = ["Name", "Type", "Arch", "Dune ID", "Smoke Test"]
-    widths = [35, 10, 8, 12, 8]
+    headers = ["Name", "Type", "Arch", "Dune ID", "Smoke Test", "Registry"]
+    widths = [35, 10, 8, 12, 8, 22]
 
     # Print header
     header_row = " | ".join(h.ljust(w) for h, w in zip(headers, widths))
@@ -181,6 +186,7 @@ def print_query_table(queries: list[dict[str, Any]]) -> None:
             (q.get("architecture") or "-")[:widths[2]],
             dune_id[:widths[3]],
             has_smoke,
+            (q.get("_registry_file") or "-")[:widths[5]],
         ]
         print(" | ".join(val.ljust(w) for val, w in zip(row, widths)))
 

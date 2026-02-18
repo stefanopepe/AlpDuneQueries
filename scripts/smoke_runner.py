@@ -11,17 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.dune_client import ExecutionResult, execute_sql
-from scripts.validators import (
-    ValidationResult,
-    run_all_validations,
-    validate_execution_success,
-    validate_non_empty,
-)
-
-
 # Base path for the repository
 REPO_ROOT = Path(__file__).parent.parent
+REGISTRY_PATHS = [
+    REPO_ROOT / "queries" / "registry.bitcoin.json",
+    REPO_ROOT / "queries" / "registry.ethereum.json",
+    REPO_ROOT / "queries" / "registry.base.json",
+]
 
 
 @dataclass
@@ -30,8 +26,8 @@ class SmokeTestResult:
 
     name: str
     success: bool
-    execution_result: ExecutionResult | None
-    validations: list[ValidationResult]
+    execution_result: Any | None
+    validations: list[Any]
     error: str | None = None
 
     @property
@@ -52,13 +48,19 @@ class SmokeTestResult:
 
 
 def load_registry() -> dict[str, Any]:
-    """Load the query registry from JSON file."""
-    registry_path = REPO_ROOT / "queries" / "registry.json"
-    if not registry_path.exists():
-        raise FileNotFoundError(f"Registry not found: {registry_path}")
-
-    with open(registry_path) as f:
-        return json.load(f)
+    """Load and merge all chain registries."""
+    merged_queries: list[dict[str, Any]] = []
+    for path in REGISTRY_PATHS:
+        if not path.exists():
+            raise FileNotFoundError(f"Registry not found: {path}")
+        with open(path) as f:
+            registry = json.load(f)
+        merged_queries.extend(registry.get("queries", []))
+    return {
+        "version": "1.0",
+        "description": "Merged query registry",
+        "queries": merged_queries,
+    }
 
 
 def get_query_info(name: str) -> dict[str, Any] | None:
@@ -90,7 +92,7 @@ def load_smoke_test_sql(test_path: str) -> str:
 
 def substitute_query_ids(sql: str, registry: dict[str, Any]) -> str:
     """
-    Substitute query_<BASE_QUERY_ID> placeholders with actual Dune query IDs.
+    Substitute query_<SOME_QUERY_NAME_ID> placeholders with actual Dune IDs.
 
     Args:
         sql: SQL string with potential placeholders.
@@ -108,23 +110,24 @@ def substitute_query_ids(sql: str, registry: dict[str, Any]) -> str:
         if query["dune_query_id"]:
             id_map[query["name"]] = query["dune_query_id"]
 
-    # Check for placeholder pattern and substitute
-    # Pattern: query_<BASE_QUERY_ID> where BASE_QUERY_ID could be a name or literal
     import re
 
+    def to_query_name(token: str) -> str:
+        # BASE_LENDING_FLOW_STITCHING_ID -> base_lending_flow_stitching
+        name = token
+        if name.endswith("_ID"):
+            name = name[:-3]
+        return name.lower()
+
     def replace_placeholder(match: re.Match) -> str:
-        placeholder = match.group(0)
-        # Try to find the base query (bitcoin_tx_features_daily)
-        base_query_name = "bitcoin_tx_features_daily"
-        if base_query_name in id_map:
-            return f"query_{id_map[base_query_name]}"
-        # If we can't substitute, return original (will fail at Dune execution)
-        return placeholder
+        token = match.group(1)
+        qname = to_query_name(token)
+        dune_id = id_map.get(qname)
+        if dune_id:
+            return f"query_{dune_id}"
+        return match.group(0)
 
-    # Replace query_<BASE_QUERY_ID> pattern
-    result = re.sub(r"query_<BASE_QUERY_ID>", replace_placeholder, sql)
-
-    return result
+    return re.sub(r"query_<([A-Z0-9_]+)>", replace_placeholder, sql)
 
 
 def run_smoke_test(
@@ -172,6 +175,9 @@ def run_smoke_test(
         sql = substitute_query_ids(sql, registry)
 
         # Execute the smoke test
+        from scripts.dune_client import execute_sql
+        from scripts.validators import validate_execution_success, validate_non_empty
+
         print(f"  Executing smoke test for '{name}'...")
         result = execute_sql(sql, timeout_seconds=timeout_seconds)
 

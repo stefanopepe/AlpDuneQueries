@@ -84,7 +84,13 @@ python -m scripts.registry_manager validate
 
 ## Query Registry
 
-The query registry (`queries/registry.json`) maintains metadata about all queries:
+Query metadata is split across chain-specific files:
+
+- `queries/registry.bitcoin.json`
+- `queries/registry.ethereum.json`
+- `queries/registry.base.json`
+
+The scripts merge these files transparently and operate on a single in-memory registry.
 
 ```json
 {
@@ -204,7 +210,7 @@ Ensure your `.env` file exists and contains a valid API key.
 Error: Query 'xyz' not found in registry
 ```
 
-Check the query name in `queries/registry.json`. Use `registry_manager list` to see available queries.
+Check the query name in the chain registries under `queries/registry.*.json`. Use `registry_manager list` to see available queries.
 
 ### Nested Query ID Not Set
 
