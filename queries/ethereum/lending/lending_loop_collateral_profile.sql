@@ -174,9 +174,24 @@ flows_with_collateral AS (
             ELSE NULL
         END AS implied_leverage
     FROM flows f
-    LEFT JOIN entity_daily_collateral ec
-        ON ec.entity_address = f.entity_address
-        AND ec.block_date = f.block_date
+    LEFT JOIN LATERAL (
+        SELECT
+            entity_address,
+            block_date,
+            total_collateral_usd,
+            primary_collateral_symbol,
+            primary_collateral_category,
+            has_btc_collateral,
+            btc_collateral_usd,
+            eth_collateral_usd,
+            eth_lst_collateral_usd,
+            distinct_categories
+        FROM entity_daily_collateral ec
+        WHERE ec.entity_address = f.entity_address
+          AND ec.block_date <= f.block_date
+        ORDER BY ec.block_date DESC
+        LIMIT 1
+    ) ec ON TRUE
 )
 
 -- ============================================================
