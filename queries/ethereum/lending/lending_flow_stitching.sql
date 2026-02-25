@@ -168,7 +168,8 @@ cross_tx_ranked AS (
     SELECT
         CONCAT(
             CAST(b.tx_hash AS VARCHAR), '-',
-            CAST(s.tx_hash AS VARCHAR)
+            CAST(s.tx_hash AS VARCHAR), '-',
+            CAST(s.evt_index AS VARCHAR)
         ) AS flow_id,
         b.block_date,
         b.entity_address,
@@ -186,10 +187,11 @@ cross_tx_ranked AS (
         FALSE AS is_same_tx,
         b.amount,
         b.amount_usd,
-        -- Deduplicate: keep only the first supply after each borrow
+        -- Deduplicate per borrow + destination transaction:
+        -- keep first matching supply event in each destination tx
         ROW_NUMBER() OVER (
-            PARTITION BY b.tx_hash, b.evt_index
-            ORDER BY s.block_time
+            PARTITION BY b.tx_hash, b.evt_index, s.tx_hash
+            ORDER BY s.block_time, s.evt_index
         ) AS rn
     FROM borrows b
     INNER JOIN supplies s
