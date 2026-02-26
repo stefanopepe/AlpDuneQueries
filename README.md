@@ -2,6 +2,25 @@
 
 A curated collection of SQL queries for [Dune Analytics](https://dune.com/), the blockchain analytics platform for querying on-chain data across Ethereum, Polygon, Arbitrum, Optimism, Solana, and more.
 
+## Alpen SIGNAL Runner (ETH + Base)
+
+This repo now includes a runnable BTC-collateral borrowing intent pipeline:
+
+```bash
+python3 -m src.run
+```
+
+Expected environment variables:
+
+- `DUNE_API_KEY` (required)
+- `LOOKBACK_DAYS` (optional, default `90`; use `7`/`14` for sample runs)
+
+Outputs:
+
+- `outputs/signal_report.md`
+- `outputs/signal_metrics.csv`
+- `outputs/borrow_flows_sample.csv`
+
 ## Overview
 
 This repository provides:
