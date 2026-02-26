@@ -17,6 +17,7 @@ REGISTRY_PATHS = [
     REPO_ROOT / "queries" / "registry.bitcoin.json",
     REPO_ROOT / "queries" / "registry.ethereum.json",
     REPO_ROOT / "queries" / "registry.base.json",
+    REPO_ROOT / "queries" / "registry.intent.json",
 ]
 
 

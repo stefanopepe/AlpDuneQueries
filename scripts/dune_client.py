@@ -17,6 +17,16 @@ from dotenv import load_dotenv
 
 API_BASE = "https://api.dune.com/api/v1"
 
+# Dune rate-limit model (docs): low-limit endpoints are write-heavy (execute),
+# high-limit endpoints are read-heavy (status/results).
+PLAN_LIMITS = {
+    "free": {"low_rpm": 15, "high_rpm": 40},
+    "plus": {"low_rpm": 70, "high_rpm": 200},
+    "enterprise": {"low_rpm": 350, "high_rpm": 1000},
+}
+
+_LAST_REQUEST_TS = {"low": 0.0, "high": 0.0}
+
 
 @dataclass
 class ExecutionResult:
@@ -48,6 +58,32 @@ def _get_api_key() -> str:
     return api_key
 
 
+def _get_plan_limits() -> dict[str, int]:
+    plan = os.getenv("DUNE_RATE_PLAN", "free").strip().lower()
+    return PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+
+
+def _endpoint_bucket(method: str, path: str) -> str:
+    # Execute endpoints are low-limit; status/results/read are high-limit.
+    # We keep this narrow to endpoints used by this repository.
+    p = path.split("?")[0]
+    if method == "POST" and p in {"/sql/execute", "/query/execute"}:
+        return "low"
+    return "high"
+
+
+def _throttle_for_bucket(bucket: str) -> None:
+    limits = _get_plan_limits()
+    rpm = limits["low_rpm"] if bucket == "low" else limits["high_rpm"]
+    if rpm <= 0:
+        return
+    min_interval = 60.0 / float(rpm)
+    now = time.time()
+    elapsed = now - _LAST_REQUEST_TS[bucket]
+    if elapsed < min_interval:
+        time.sleep(min_interval - elapsed)
+
+
 def _request(
     method: str,
     path: str,
@@ -63,18 +99,45 @@ def _request(
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
 
+    bucket = _endpoint_bucket(method, path)
+    _throttle_for_bucket(bucket)
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = resp.read().decode("utf-8")
+            _LAST_REQUEST_TS[bucket] = time.time()
             if not body:
                 return {}
             return json.loads(body)
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="ignore")
+        _LAST_REQUEST_TS[bucket] = time.time()
         raise RuntimeError(f"HTTP {e.code}: {raw}") from e
     except urllib.error.URLError as e:
         raise RuntimeError(f"Network error: {e}") from e
+
+
+def _request_with_retry(
+    method: str,
+    path: str,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+    max_retries: int = 6,
+) -> dict[str, Any]:
+    """
+    Retry transient rate-limit responses using bounded exponential backoff.
+    """
+    delay = 4.0
+    for attempt in range(max_retries):
+        try:
+            return _request(method, path, api_key, payload)
+        except RuntimeError as e:
+            msg = str(e)
+            if "HTTP 429" not in msg or attempt == max_retries - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.8, 30.0)
+    return {}
 
 
 def execute_sql(
@@ -92,7 +155,7 @@ def execute_sql(
             payload["query_parameters"] = params
 
         start = time.time()
-        exec_resp = _request("POST", "/sql/execute", api_key, payload)
+        exec_resp = _request_with_retry("POST", "/sql/execute", api_key, payload)
         execution_id = str(exec_resp.get("execution_id", ""))
         if not execution_id:
             return ExecutionResult(
@@ -115,7 +178,7 @@ def execute_sql(
         state = "QUERY_STATE_PENDING"
         last_status: dict[str, Any] = {}
         while time.time() - start < timeout_seconds:
-            status = _request("GET", f"/execution/{execution_id}/status", api_key)
+            status = _request_with_retry("GET", f"/execution/{execution_id}/status", api_key)
             last_status = status
             state = str(status.get("state") or status.get("query_state") or state)
             if state in terminal_states:
@@ -140,7 +203,7 @@ def execute_sql(
                 execution_time_ms=int((time.time() - start) * 1000),
             )
 
-        res = _request("GET", f"/execution/{execution_id}/results", api_key)
+        res = _request_with_retry("GET", f"/execution/{execution_id}/results", api_key)
         result_obj = res.get("result", {}) if isinstance(res, dict) else {}
         rows = result_obj.get("rows", []) if isinstance(result_obj, dict) else []
         columns = list(rows[0].keys()) if rows else []
@@ -180,7 +243,7 @@ def execute_query(
             payload["query_parameters"] = params
 
         start = time.time()
-        exec_resp = _request("POST", "/query/execute", api_key, payload)
+        exec_resp = _request_with_retry("POST", "/query/execute", api_key, payload)
         execution_id = str(exec_resp.get("execution_id", ""))
         if not execution_id:
             return ExecutionResult(False, None, "FAILED", [], [], 0, f"Missing execution_id: {exec_resp}")
@@ -193,7 +256,7 @@ def execute_query(
         }
         state = "QUERY_STATE_PENDING"
         while time.time() - start < timeout_seconds:
-            status = _request("GET", f"/execution/{execution_id}/status", api_key)
+            status = _request_with_retry("GET", f"/execution/{execution_id}/status", api_key)
             state = str(status.get("state") or status.get("query_state") or state)
             if state in terminal_states:
                 break
@@ -202,7 +265,7 @@ def execute_query(
         if state != "QUERY_STATE_COMPLETED":
             return ExecutionResult(False, execution_id, state, [], [], 0, f"Execution not completed. Final state: {state}")
 
-        res = _request("GET", f"/execution/{execution_id}/results", api_key)
+        res = _request_with_retry("GET", f"/execution/{execution_id}/results", api_key)
         result_obj = res.get("result", {}) if isinstance(res, dict) else {}
         rows = result_obj.get("rows", []) if isinstance(result_obj, dict) else []
         columns = list(rows[0].keys()) if rows else []
@@ -227,7 +290,7 @@ def get_latest_result(
     """Get latest cached result for a saved query."""
     try:
         api_key = _get_api_key()
-        res = _request("GET", f"/query/{query_id}/results?max_age_hours={max_age_hours}", api_key)
+        res = _request_with_retry("GET", f"/query/{query_id}/results?max_age_hours={max_age_hours}", api_key)
         result_obj = res.get("result", {}) if isinstance(res, dict) else {}
         rows = result_obj.get("rows", []) if isinstance(result_obj, dict) else []
         columns = list(rows[0].keys()) if rows else []

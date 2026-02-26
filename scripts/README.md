@@ -35,6 +35,12 @@ pip install dune-client python-dotenv pandas
    DUNE_API_KEY=your_api_key_here
    ```
 
+3. (Optional) Set plan-aware rate limiting for smoke tests:
+   ```
+   DUNE_RATE_PLAN=free   # free | plus | enterprise
+   ```
+   The client automatically throttles low/high endpoint classes and retries 429s.
+
 ## Scripts
 
 ### Smoke Test Runner (`smoke_runner.py`)
@@ -89,6 +95,7 @@ Query metadata is split across chain-specific files:
 - `queries/registry.bitcoin.json`
 - `queries/registry.ethereum.json`
 - `queries/registry.base.json`
+- `queries/registry.intent.json`
 
 The scripts merge these files transparently and operate on a single in-memory registry.
 

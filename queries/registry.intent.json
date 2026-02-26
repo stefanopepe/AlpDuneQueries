@@ -1,0 +1,96 @@
+{
+  "version": "1.0",
+  "description": "Intent query metadata registry (phase-1 source-of-truth suite)",
+  "queries": [
+    {
+      "name": "btc_collateral_market_map_independent",
+      "file": "queries/intent/btc_collateral_market_map_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_chain_protocol_coverage_smoke.sql",
+      "dependencies": [],
+      "description": "Independent protocol market map for Morpho Blue + Aave V3"
+    },
+    {
+      "name": "stable_borrow_events_independent",
+      "file": "queries/intent/stable_borrow_events_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": null,
+      "dependencies": [],
+      "description": "Independent stable borrow event extractor"
+    },
+    {
+      "name": "btc_collateral_positions_independent",
+      "file": "queries/intent/btc_collateral_positions_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": null,
+      "dependencies": [],
+      "description": "Independent BTC collateral event and running position extractor"
+    },
+    {
+      "name": "btc_backed_borrow_cohort_independent",
+      "file": "queries/intent/btc_backed_borrow_cohort_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_temporal_logic_smoke.sql",
+      "dependencies": [],
+      "description": "Borrow-time BTC-backed cohort extractor"
+    },
+    {
+      "name": "borrow_intent_signals_independent",
+      "file": "queries/intent/borrow_intent_signals_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_failure_path_smoke.sql",
+      "dependencies": [],
+      "description": "Independent intent signal computation with bounded outflow logic"
+    },
+    {
+      "name": "borrow_intent_classification_independent",
+      "file": "queries/intent/borrow_intent_classification_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_schema_contract_smoke.sql",
+      "dependencies": [],
+      "description": "Deterministic intent bucket classification"
+    },
+    {
+      "name": "borrow_intent_metrics_daily_independent",
+      "file": "queries/intent/borrow_intent_metrics_daily_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_determinism_smoke.sql",
+      "dependencies": [],
+      "description": "Daily intent metrics and concentration statistics"
+    },
+    {
+      "name": "borrow_intent_coverage_sanity_independent",
+      "file": "queries/intent/borrow_intent_coverage_sanity_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_cross_checks_smoke.sql",
+      "dependencies": [],
+      "description": "Coverage and parity sanity checks"
+    },
+    {
+      "name": "borrow_intent_statistical_significance_independent",
+      "file": "queries/intent/borrow_intent_statistical_significance_independent.sql",
+      "dune_query_id": null,
+      "type": "standalone",
+      "architecture": "v2",
+      "smoke_test": "tests/intent/intent_statistical_gating_smoke.sql",
+      "dependencies": [],
+      "description": "Statistical adequacy and publication gating signals"
+    }
+  ]
+}
